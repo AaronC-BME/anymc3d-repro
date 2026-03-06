@@ -4,9 +4,9 @@ defaults:
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 data:
-  data_root:   "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/nnsslPlans_onemmiso/Dataset009_PDCAD_NM/Dataset009_PDCAD_NM"
-  labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json"
-  splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json"
+  data_root:   "/path/to/pdcad/data"
+  labels_path: "/path/to/pdcad/labels.json"
+  splits_path: "/path/to/pdcad/splits.json"
   fold: 0
   batch_size: 2
   num_workers: 4

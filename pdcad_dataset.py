@@ -209,9 +209,9 @@ class PDCADDataModule:
 
 
 if __name__ == "__main__":
-    DATA_ROOT   = "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/nnsslPlans_onemmiso/Dataset009_PDCAD_NM/Dataset009_PDCAD_NM"
-    LABELS_PATH = "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json"
-    SPLITS_PATH = "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json"
+    DATA_ROOT   = "/path/to/pdcad/data"
+    LABELS_PATH = "/path/to/pdcad/labels.json"
+    SPLITS_PATH = "/path/to/pdcad/splits.json"
 
     print("=" * 60)
     print("PDCADDataset Sanity Check")
