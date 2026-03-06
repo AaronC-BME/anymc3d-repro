@@ -4,7 +4,7 @@ Scalable 3D Medical Image Classifier adapted from 2D Foundation Models.
 
 Based on: *"Revisiting 2D Foundation Models for Scalable 3D Medical Image Classification"* — Liu et al., 2025 ([arXiv:2512.12887](https://arxiv.org/abs/2512.12887))
 
-This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using T1-contrast MRI volumes.
+This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes.
 
 ---
 
@@ -39,6 +39,23 @@ AnyMC3D/
 
 ---
 
+## Dataset Download
+
+The PDCAD dataset (Nuclear Medicine (NM) volumes, labels, and splits) is available for download via Google Drive:
+
+> 📁 **[Download PDCAD dataset](https://drive.google.com/drive/folders/1cLZosBVq2HbyDH0BbSxf90J4M96A_4gi?usp=drive_link)**
+
+The archive includes:
+- `labels.json` — binary labels for all cases
+- `splits.json` — train/val split (200 training cases, 100 validation cases)
+- Pre-processed `.b2nd` volumes (Blosc2-compressed, ready for training — no conversion needed)
+
+After downloading, extract the archive and point `data_root` in `configs/train_pdcad.yaml` to the extracted directory.
+
+> **Note on preprocessing:** The `.b2nd` files are pre-converted from the original `.nii.gz` images using [nnssl](https://github.com/MIC-DKFZ/nnssl). If you need to re-run preprocessing from raw NIfTI files (e.g., to change the voxel spacing or crop parameters), a conversion script is available — open an issue or contact the maintainers.
+
+---
+
 ## Installation
 
 **1. Install PyTorch (with CUDA) first:**
@@ -63,7 +80,7 @@ The dataset loader expects the following directory structure:
 <data_root>/
     <case_id>/
         ses-DEFAULT/
-            <case_id>_0000.b2nd     # Blosc2-compressed volume (1, D, H, W) float32
+            <case_id>_0000.b2nd     # Blosc2-compressed NM volume (1, D, H, W) float32
 ```
 
 Two JSON metadata files are also required:
@@ -77,13 +94,12 @@ Two JSON metadata files are also required:
 }
 ```
 
-**`splits.json`** — defines train/val/test splits per fold:
+**`splits.json`** — defines the train/val split:
 ```json
 {
     "0": {
         "train": ["case_001", "case_002", ...],
-        "val":   ["case_010", "case_011", ...],
-        "test":  ["case_020", "case_021", ...]
+        "val":   ["case_010", "case_011", ...]
     }
 }
 ```
@@ -93,6 +109,8 @@ Volumes are automatically resized to `(1, 128, 128, 128)` and min-max normalized
 ---
 
 ## Training on PDCAD
+
+> ⚠️ **Before training**, update the dataset paths in `configs/train_pdcad.yaml` to point to your local data:
 
 **1. Edit `configs/train_pdcad.yaml`** to point to your data:
 

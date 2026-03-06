@@ -4,9 +4,9 @@ defaults:
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 data:
-  data_root: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/nnsslPlans_onemmiso/Dataset006_T1c_cropped_20260115/Dataset006_T1c_cropped_20260115"
-  labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/labels.json"
-  splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/splits_hold_out.json"
+  data_root: "/path/to/data"
+  labels_path: "/path/to/labels.json"
+  splits_path: "/path/to/splits.json"
   fold: 0
   batch_size: 2
   num_workers: 4
