@@ -1,0 +1,19 @@
+# @package _global_
+model:
+  arch: "anymc3d"
+  run_name: "anymc3d-vitl14-t1c"
+  modalities: ["t1c"]
+  backbone_name: "dinov2_vitl14"
+  num_classes: 4
+  lora_rank: 8
+  lora_alpha: 16
+  input_size: 98
+  dropout: 0.1
+
+optimizer:
+  lora_lr: 5e-6
+  lora_weight_decay: 1e-5
+  head_lr: 5e-5
+  head_weight_decay: 1e-4
+  warmup_epochs: 0
+  lr_scheduler: "cosine"   # "cosine" or "constant"

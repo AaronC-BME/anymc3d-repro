@@ -1,0 +1,12 @@
+# @package _global_.model
+arch: "rsna_cnn"
+run_name: "rsna-effb4-gru"
+num_classes: 4
+backbone_name: "efficientnet_b4"
+target_slices: 96
+n_triplets: 32
+img_size: 224
+gru_hidden: 256
+gru_layers: 2
+bidirectional: true
+dropout: 0.2

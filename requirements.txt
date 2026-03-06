@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------
+# AnyMC3D Requirements
+# Install PyTorch FIRST (separately) before this file:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# Then:
+#   pip install -r requirements.txt
+# ---------------------------------------------------------------
+
+# --- Core training framework ---
+lightning>=2.0.0
+torchmetrics>=1.0.0
+
+# --- AnyMC3D specific ---
+peft>=0.10.0              # LoRA adapters
+einops>=0.7.0             # Tensor rearranging for slice operations
+timm>=0.9.0               # Backup vision model utilities
+
+# --- Medical imaging ---
+monai>=1.3.0
+nibabel>=5.0.0
+SimpleITK>=2.3.0
+
+# --- Config management & experiment tracking ---
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+wandb>=0.16.0
+
+# --- Data & evaluation ---
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+openpyxl>=3.1.0           # Excel export (used in your inference scripts)
+
+# --- Visualization ---
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# --- Utilities ---
+tqdm>=4.65.0
+Pillow>=10.0.0
+blosc2>=2.3.0             # Your existing Blosc2 compressed data format

@@ -1,0 +1,29 @@
+# Checkpoints & model weights
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+# Experiment tracking
+wandb/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.env
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

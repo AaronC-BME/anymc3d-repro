@@ -1,0 +1,39 @@
+defaults:
+  - model: anymc3d_vitl    # swap to: anymc3d_vitb, rsna_effb0, rsna_effb4
+  - _self_
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  data_root:   "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/nnsslPlans_onemmiso/Dataset009_PDCAD_NM/Dataset009_PDCAD_NM"
+  labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json"
+  splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json"
+  fold: 0
+  batch_size: 2
+  num_workers: 4
+  augment: true
+  dataset: "pdcad"          # ← tells train.py which datamodule to import
+
+# ── Optimizer ─────────────────────────────────────────────────────────────────
+optimizer:
+  lr: 1e-4
+  weight_decay: 1e-4
+  warmup_epochs: 0
+  lr_scheduler: "cosine"
+
+# ── Loss ──────────────────────────────────────────────────────────────────────
+loss:
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  max_epochs: 200
+  precision: "16-mixed"
+  early_stopping_patience: 40
+  save_top_k: 3
+  log_every_n_steps: 5
+  seed: 42
+
+# ── W&B ───────────────────────────────────────────────────────────────────────
+wandb:
+  project: "pdcad-anymc3d"
