@@ -84,52 +84,38 @@ class AttentionPool(nn.Module):
 
 class ModalityEncoder(nn.Module):
     """
-    Encodes a single 3D MRI volume (one modality) into a fixed-size embedding.
-
-    Pipeline:
-        3D volume
-            -> extract ALL 2D slices along each of 3 anatomical planes
-            -> resize each slice to input_size x input_size
-            -> replicate to 3 channels (RGB) + ImageNet normalize
-            -> LoRA-adapted DINOv2 CLS token per slice
-            -> attention pool per plane  -> 3 plane embeddings
-            -> mean fusion               -> modality embedding
+    Encodes a single 3D MRI volume into a fixed-size embedding.
+    Slices along the highest-resolution axis only — matching AnyMC3D Section 3.2.
     """
 
     def __init__(
         self,
-        backbone:   nn.Module,
-        embed_dim:  int,
-        lora_rank:  int = 8,
-        lora_alpha: int = 16,
-        input_size: int = 224,
+        backbone:    nn.Module,
+        embed_dim:   int,
+        lora_rank:   int = 8,
+        lora_alpha:  int = 16,
+        input_size:  int = 224,
+        slice_axis:  int = 1,   # which spatial dim to slice along
+                                # for (B,1,H,W,S): 1=H, 2=W, 3=S
     ):
         super().__init__()
-
         self.embed_dim  = embed_dim
         self.input_size = input_size
+        self.slice_axis = slice_axis
 
-        # Apply LoRA adapters to patch embedding + all attention projections
         lora_config = LoraConfig(
-            r=lora_rank,
-            lora_alpha=lora_alpha,
-            target_modules=["qkv", "proj", "patch_embed.proj"],
-            lora_dropout=0.0,
-            bias="none",
+            r            = lora_rank,
+            lora_alpha   = lora_alpha,
+            target_modules = ["qkv", "proj", "patch_embed.proj"],
+            lora_dropout = 0.0,
+            bias         = "none",
         )
         self.adapted_backbone = get_peft_model(backbone, lora_config)
 
-        # Shared attention pool across all three planes
+        # One query per modality encoder — this is the view query (q^(i)) from Fig 2b
         self.pool = AttentionPool(embed_dim)
 
     def encode_slices(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Run LoRA-adapted DINOv2 on a batch of preprocessed slices.
-        Args:
-            x: [N, 3, H, W] preprocessed RGB slices
-        Returns:
-            [N, D] CLS token embeddings
-        """
         out = self.adapted_backbone.forward_features(x)
         if isinstance(out, dict):
             return out['x_norm_clstoken']
@@ -138,64 +124,59 @@ class ModalityEncoder(nn.Module):
     def forward(self, x: torch.Tensor):
         """
         Args:
-            x: [B, 1, H, W, S] single-channel volume, values in [0, 1]
+            x: [B, 1, H, W, S]  values in [0, 1]
+               For PDCAD: [B, 1, 300, 300, 70]
+               slice_axis=1 means we slice along H=300
         Returns:
-            v:            [B, D]                        modality embedding
-            attn_weights: dict[str -> [B, n_slices]]    per-plane attention weights
+            v:    [B, D]         modality embedding
+            attn: [B, n_slices]  attention weights
         """
         B, C, H, W, S = x.shape
 
-        plane_embeddings = []
-        attn_weights     = {}
+        # Move slice axis to position 1 so we can index along it
+        # slice_axis refers to the spatial dims: 1=H, 2=W, 3=S
+        # In the full tensor dims are: 0=B, 1=C, 2=H, 3=W, 4=S
+        spatial_to_full = {1: 2, 2: 3, 3: 4}
+        full_axis = spatial_to_full[self.slice_axis]
 
-        for plane in ['axial', 'coronal', 'sagittal']:
+        # Move the slicing axis to dim 1 (after batch)
+        # e.g. for H: (B,C,H,W,S) -> (B,H,C,W,S)
+        perm        = [0, full_axis] + [i for i in range(1, 5) if i != full_axis]
+        x_perm      = x.permute(*perm)           # (B, n_slices, C, h, w)
+        n_slices    = x_perm.shape[1]
+        h_sz        = x_perm.shape[3]
+        w_sz        = x_perm.shape[4]
 
-            # ── 1. Extract ALL slices along this plane ────────────────────────
-            if plane == 'axial':
-                # slice along S -> [B, S, C, H, W]
-                all_slices = x.permute(0, 4, 1, 2, 3)
-                n = S
-            elif plane == 'coronal':
-                # slice along W -> [B, W, C, H, S]
-                all_slices = x.permute(0, 3, 1, 2, 4)
-                n = W
-            else:  # sagittal
-                # slice along H -> [B, H, C, W, S]
-                all_slices = x.permute(0, 2, 1, 3, 4)
-                n = H
+        # Flatten batch and slice dims
+        flat = x_perm.reshape(B * n_slices, C, h_sz, w_sz)
 
-            # ── 2. Flatten, resize, convert to RGB, normalize ─────────────────
-            h_sz = all_slices.shape[3]
-            w_sz = all_slices.shape[4]
+        # Resize in-plane to DINOv2 input size
+        if h_sz != self.input_size or w_sz != self.input_size:
+            flat = F.interpolate(
+                flat,
+                size=(self.input_size, self.input_size),
+                mode='bilinear',
+                align_corners=False,
+            )
 
-            flat = all_slices.reshape(B * n, C, h_sz, w_sz)
+        flat = flat.clamp(0, 1)
+        flat = flat.repeat(1, 3, 1, 1)       # (B*n, 3, 224, 224)
+        flat = normalize_slices(flat)         # ImageNet stats
 
-            if h_sz != self.input_size or w_sz != self.input_size:
-                flat = F.interpolate(flat,
-                                     size=(self.input_size, self.input_size),
-                                     mode='bilinear', align_corners=False)
+        # Chunk DINOv2 forward passes to avoid OOM at high resolutions
+        # (e.g., 308x308 with 70 slices × batch_size 2 = 140 passes)
+        _chunk = 4
+        if flat.shape[0] > _chunk:
+            embeddings = torch.cat(
+                [self.encode_slices(c) for c in flat.split(_chunk, dim=0)],
+                dim=0,
+            )
+        else:
+            embeddings = self.encode_slices(flat)                   # (B*n, D)                      # (B*n, D)
+        H_seq      = rearrange(embeddings, '(b s) d -> b s d', b=B) # (B, n, D)
 
-            flat = flat.clamp(0, 1)
-
-            if C == 1:
-                flat = flat.repeat(1, 3, 1, 1)       # [B*n, 3, input_size, input_size]
-
-            flat = normalize_slices(flat)             # ImageNet stats
-
-            # ── 3. Encode with LoRA-adapted DINOv2 ───────────────────────────
-            embeddings = self.encode_slices(flat)     # [B*n, D]
-            H_seq      = rearrange(embeddings,
-                                   '(b s) d -> b s d', b=B)  # [B, n, D]
-
-            # ── 4. Attention pool over all slices in this plane ───────────────
-            v_plane, a_plane = self.pool(H_seq)       # [B, D], [B, n]
-            plane_embeddings.append(v_plane)
-            attn_weights[plane] = a_plane
-
-        # ── 5. Mean fusion across the 3 planes ───────────────────────────────
-        v = torch.stack(plane_embeddings, dim=1).mean(dim=1)   # [B, D]
-
-        return v, attn_weights
+        v, a = self.pool(H_seq)    # (B, D), (B, n_slices)
+        return v, a
 
 
 # ---------------------------------------------------------------
@@ -253,6 +234,7 @@ class AnyMC3D(nn.Module):
         lora_alpha:    int   = 16,
         input_size:    int   = 224,
         dropout:       float = 0.1,
+        slice_axis:    int   = 3,
     ):
         """
         Args:
@@ -283,7 +265,7 @@ class AnyMC3D(nn.Module):
         self.embed_dim = embed_dim
         print(f"Backbone embed_dim: {embed_dim}")
 
-        # Per-modality encoders — each gets its own independent LoRA weights
+        # In AnyMC3D.__init__, replace the encoders block with:
         self.encoders = nn.ModuleDict()
         for modality in modalities:
             self.encoders[modality] = ModalityEncoder(
@@ -292,6 +274,7 @@ class AnyMC3D(nn.Module):
                 lora_rank  = lora_rank,
                 lora_alpha = lora_alpha,
                 input_size = input_size,
+                slice_axis = slice_axis,  # add this parameter to AnyMC3D.__init__ too
             )
 
         # Multi-modal fusion (only when > 1 modality)
@@ -366,6 +349,7 @@ class AnyMC3DLightningModule(L.LightningModule):
         lora_alpha:         int   = 16,
         input_size:         int   = 224,
         dropout:            float = 0.1,
+        slice_axis:         int   = 3,
         # Optimizer
         lora_lr:            float = 5e-5,
         lora_weight_decay:  float = 1e-5,
@@ -395,7 +379,11 @@ class AnyMC3DLightningModule(L.LightningModule):
         self.modalities  = modalities
 
         # Metrics
-        metric_kwargs = dict(task='multiclass', num_classes=num_classes)
+        # With:
+        if num_classes == 2:
+            metric_kwargs = dict(task='binary')
+        else:
+            metric_kwargs = dict(task='multiclass', num_classes=num_classes)
         self.val_auroc    = AUROC(**metric_kwargs)
         self.val_acc      = Accuracy(**metric_kwargs)
         self.val_f1       = F1Score(average='macro', **metric_kwargs)
@@ -455,7 +443,7 @@ class AnyMC3DLightningModule(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss, probs, y = self._shared_step(batch)
         preds = probs.argmax(dim=1)
-        self.val_auroc.update(probs, y)
+        self.val_auroc.update(probs[:, 1], y)  # <-- fix: pass prob of class 1 only
         self.val_acc.update(preds, y)
         self.val_f1.update(preds, y)
         self.val_bal_acc.update(preds, y)
@@ -472,7 +460,7 @@ class AnyMC3DLightningModule(L.LightningModule):
     def test_step(self, batch, batch_idx):
         loss, probs, y = self._shared_step(batch)
         preds = probs.argmax(dim=1)
-        self.test_auroc.update(probs, y)
+        self.test_auroc.update(probs[:, 1], y)  # <-- fix this line
         self.test_acc.update(preds, y)
         self.test_f1.update(preds, y)
         self.test_bal_acc.update(preds, y)
@@ -578,13 +566,13 @@ if __name__ == '__main__':
 
     dummy_inputs = {
         't1c': torch.randn(B, 1, H, W, S).clamp(0, 1).to(device),
-        't2w': torch.randn(B, 1, H, W, S).clamp(0, 1).to(device),
+        # 't2w': torch.randn(B, 1, H, W, S).clamp(0, 1).to(device),
     }
 
     # Use ViT-S for quick testing — swap to dinov2_vitl14 for real training
     model = AnyMC3D(
-        num_classes   = 4,
-        modalities    = ['t1c', 't2w'],
+        num_classes   = 2,
+        modalities    = ['t1c'],
         backbone_name = 'dinov2_vits14',
         lora_rank     = 8,
         lora_alpha    = 16,

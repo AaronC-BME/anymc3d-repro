@@ -4,22 +4,21 @@ defaults:
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 data:
-  data_root: "/path/to/data"
-  labels_path: "/path/to/labels.json"
-  splits_path: "/path/to/splits.json"
-  fold: 0
+  data_root: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/nnsslPlans_onemmiso/Dataset006_T1c_cropped_20260115/Dataset006_T1c_cropped_20260115"
+  labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/labels.json"
+  splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/splits_5_folds_hold_out.json"
+  fold: [0, 1, 2, 3, 4]   # list → run all folds; single int → run one fold
   batch_size: 2
   num_workers: 4
   augment: true
-  dataset: "meningioma"    # ← tells train.py which datamodule to import
+  dataset: "meningioma"    # "meningioma", "meningioma_wholebrain", or "pdcad"
 
 # ── Optimizer ─────────────────────────────────────────────────────────────────
 optimizer:
-  # RSNA-CNN (single LR for all params)
   lr: 1e-4
   weight_decay: 1e-4
-  # Shared
   warmup_epochs: 0
+  lr_scheduler: "cosine"   # overridden by model config for anymc3d
 
 # ── Loss ──────────────────────────────────────────────────────────────────────
 loss:
@@ -37,4 +36,4 @@ training:
 
 # ── W&B ───────────────────────────────────────────────────────────────────────
 wandb:
-  project: "meningioma-anymc3d"
+  project: "anymc3d"

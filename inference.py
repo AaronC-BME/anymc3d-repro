@@ -36,7 +36,7 @@ from sklearn.preprocessing import label_binarize
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
-CLASS_NAMES = ['MG1', 'MG2', 'MG3', 'MG4']
+CLASS_NAMES = ['COCA1', 'COCA2', 'COCA3', 'COCA4']
 
 
 # ---------------------------------------------------------------
@@ -156,10 +156,19 @@ def compute_per_class_stats(y_true, y_pred, per_class_auroc, num_classes):
 # ---------------------------------------------------------------
 
 def plot_confusion_matrix(y_true, y_pred, path):
-    cm = confusion_matrix(y_true, y_pred, labels=list(range(len(CLASS_NAMES))))
+    cm      = confusion_matrix(y_true, y_pred, labels=list(range(len(CLASS_NAMES))))
+    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)  # row-normalised (% of true class)
+
+    # Build annotation: count on top line, percentage below
+    annot = np.empty_like(cm, dtype=object)
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            annot[i, j] = f"{cm[i, j]}\n({cm_norm[i, j]*100:.1f}%)"
+
     fig, ax = plt.subplots(figsize=(8, 7))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
+    sns.heatmap(cm_norm, annot=annot, fmt="", cmap="Blues", ax=ax,
                 xticklabels=CLASS_NAMES, yticklabels=CLASS_NAMES,
+                vmin=0.0, vmax=1.0,
                 annot_kws={"size": 16})
     ax.set_xlabel('Predicted', fontsize=14, fontweight='bold')
     ax.set_ylabel('True',      fontsize=14, fontweight='bold')

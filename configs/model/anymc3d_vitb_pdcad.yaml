@@ -1,19 +1,39 @@
 # @package _global_
+#
+# AnyMC3D ViT-B config for PDCAD — aligned with first author's pdcad.yaml
+#
+# Key differences from previous config:
+#   - input_size: 308 (was 98) — author uses 308x308 in-plane slices
+#   - lr_lora: 1e-4 (was 5e-6) — 20x higher, matching author's lr_lora=0.0001
+#   - lr_head: 1e-3 (was 5e-5) — 20x higher, matching author's lr_head=0.001
+#   - max_epochs: 150 (was 100) — matching author's max_epoch=150
+#   - num_seqns/modalities: single view (was multi-plane)
+#   - seed: 0 (matching author)
+
 model:
   arch: "anymc3d"
-  run_name: "PDCAD_anymc3d-vitb14-t1c_CosineLR_LoRAlr_1e-6_headlr_5e-6_200ep"   # ← update run name
-  modalities: ["t1c"]
-  backbone_name: "dinov2_vitb14"   # ← change to vitb
-  num_classes: 2
-  lora_rank: 8
-  lora_alpha: 16
-  input_size: 98
+  run_name: "anymc3d-vitb14-pdcad_v2_slice_axis3_150ep_const"   # author: anymc3d-vitb14-pdcad_v2_fold{fold}
+  modalities: ["nm"]                # single modality, single view
+  backbone_name: "dinov2_vitb14"
+  num_classes: 2                    # binary: presence vs absence
+  lora_rank: 8                      # author: lora_rank: 8
+  lora_alpha: 16                    # author: lora_scale: 16
+  input_size: 308                  # author: patch_size [308, 308, 70] — 308/14 = 22 patches
   dropout: 0.1
+  slice_axis: 3                    # author: slice_axis: 3 (i.e., slices are along dim=3, not dim=1)
 
 optimizer:
-  lora_lr: 1e-6
-  lora_weight_decay: 1e-5
-  head_lr: 5e-6
-  head_weight_decay: 1e-4
+  lora_lr: 1.0e-04                  # author: lr_lora: 0.0001
+  lora_weight_decay: 1.0e-05        # author: weight_decay_lora: 0.00001
+  head_lr: 1.0e-03                  # author: lr_head: 0.001
+  head_weight_decay: 1.0e-04        # author: weight_decay_head: 0.0001
   warmup_epochs: 0
-  lr_scheduler: "cosine"   # "cosine" or "constant"
+  lr_scheduler: "cosine"          # no scheduler mentioned in author's config
+
+loss:
+  focal_gamma: 2.0                  # author: focal_gamma: 2.0
+  focal_alpha: 0.25                 # author: focal_alpha: 0.25
+
+training:
+  max_epochs: 150                   # author: max_epoch: 150
+  seed: 0                           # author: seed: 0
