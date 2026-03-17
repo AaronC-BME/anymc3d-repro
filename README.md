@@ -29,12 +29,16 @@ AnyMC3D/
 ├── inference.py            # Inference + metrics + plots
 ├── pdcad_dataset.py        # PDCAD Dataset and DataModule
 ├── balanced_accuracy.py    # Custom balanced accuracy metric
-├── requirements.txt        # Python dependencies
-└── configs/
-    ├── train_pdcad.yaml    # Top-level PDCAD training config
-    └── model/
-        ├── anymc3d_vitb_pdcad.yaml   # ViT-B model config for PDCAD
-        └── anymc3d_vitl.yaml         # ViT-L model config
+├── pyproject.toml          # Project dependencies (uv / pip)
+├── configs/
+│   ├── train_pdcad.yaml    # Top-level PDCAD training config
+│   └── model/
+│       ├── anymc3d_vitb_pdcad.yaml   # ViT-B model config for PDCAD
+│       └── anymc3d_vitl.yaml         # ViT-L model config
+└── outputs/                # All training and inference outputs
+    ├── checkpoints/        # Model checkpoints (per run)
+    ├── predictions/        # Inference CSVs and plots
+    └── logs/               # W&B local logs and Hydra outputs
 ```
 
 ---
@@ -58,16 +62,30 @@ After downloading, extract the archive and point `data_root` in `configs/train_p
 
 ## Installation
 
-**1. Install PyTorch (with CUDA) first:**
+**Option A: Using uv (recommended)**
+
+```bash
+uv sync
+```
+
+This creates a `.venv`, resolves all dependencies (including PyTorch with CUDA 12.1), and installs everything in one step.
+
+To run scripts:
+```bash
+uv run python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad
+```
+
+Or activate the environment manually:
+```bash
+source .venv/bin/activate
+python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad
+```
+
+**Option B: Using pip**
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
-**2. Install remaining dependencies:**
-
-```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ---
@@ -152,7 +170,10 @@ python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad data.batch_si
 python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad model.run_name=my_run
 ```
 
-Training logs to [Weights & Biases](https://wandb.ai) under the project `pdcad-anymc3d`. Checkpoints are saved to `checkpoints/<run_name>/`.
+Training logs to [Weights & Biases](https://wandb.ai) under the project `pdcad-anymc3d`. All outputs are saved under the `outputs/` directory:
+
+- **Checkpoints** → `outputs/checkpoints/<run_name>/`
+- **Loss curves and training logs** → `outputs/logs/`
 
 ---
 
@@ -161,28 +182,28 @@ Training logs to [Weights & Biases](https://wandb.ai) under the project `pdcad-a
 Point the inference script at a completed run directory. It auto-discovers the config and best checkpoint (by val AUROC):
 
 ```bash
-python inference.py --run_dir checkpoints/PDCAD_anymc3d-vitb14-t1c_CosineLR_LoRAlr_1e-6_headlr_5e-6_200ep
+python inference.py --run_dir outputs/checkpoints/PDCAD_anymc3d-vitb14-t1c_CosineLR_LoRAlr_1e-6_headlr_5e-6_200ep
 ```
 
 By default this evaluates the **test** split. To evaluate a different split:
 
 ```bash
-python inference.py --run_dir checkpoints/<run_name> --split val
+python inference.py --run_dir outputs/checkpoints/<run_name> --split val
 ```
 
 To use a specific checkpoint instead of the best:
 
 ```bash
-python inference.py --run_dir checkpoints/<run_name> --checkpoint epoch=45-val_auroc=0.8123.ckpt
+python inference.py --run_dir outputs/checkpoints/<run_name> --checkpoint epoch=45-val_auroc=0.8123.ckpt
 ```
 
 To override the data path (e.g. running on a different machine):
 
 ```bash
-python inference.py --run_dir checkpoints/<run_name> --data_root /new/path/to/data
+python inference.py --run_dir outputs/checkpoints/<run_name> --data_root /new/path/to/data
 ```
 
-**Outputs** are saved inside the run directory:
+**Outputs** are saved inside `outputs/predictions/<run_name>/`:
 
 | File | Description |
 |------|-------------|
@@ -200,10 +221,10 @@ python inference.py --run_dir checkpoints/<run_name> --data_root /new/path/to/da
 | `backbone_name` | `dinov2_vitb14` | DINOv2 variant (`vits14`, `vitb14`, `vitl14`) |
 | `lora_rank` | 8 | LoRA rank |
 | `lora_alpha` | 16 | LoRA scaling |
-| `input_size` | 98 | Slice resize resolution |
-| `lora_lr` | 1e-6 | Learning rate for LoRA parameters |
-| `head_lr` | 5e-6 | Learning rate for classifier head |
-| `max_epochs` | 200 | Maximum training epochs |
+| `input_size` | 308 | Slice resize resolution |
+| `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
+| `head_lr` | 1e-3 | Learning rate for classifier head |
+| `max_epochs` | 150 | Maximum training epochs |
 | `early_stopping_patience` | 40 | Early stopping patience (monitors val loss) |
 
 ---
