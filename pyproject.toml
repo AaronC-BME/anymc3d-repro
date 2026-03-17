@@ -1,0 +1,81 @@
+[project]
+name = "anymc3d"
+version = "0.1.0"
+description = "AnyMC3D: Scalable 3D Medical Image Classification with 2D Foundation Models"
+requires-python = ">=3.10,<3.13"
+readme = "README.md"
+
+dependencies = [
+    # --- Core training framework ---
+    "lightning>=2.0.0",
+    "torchmetrics>=1.0.0",
+    # --- AnyMC3D specific ---
+    "peft>=0.10.0", # LoRA adapters for frozen backbones
+    "einops>=0.7.0", # Tensor rearranging for slice operations
+    "timm>=0.9.0", # Vision model utilities / backbones
+    "xformers>=0.0.22", # Memory-efficient attention for DINOv2 ViT
+    # --- Medical imaging ---
+    "monai>=1.3.0",
+    "nibabel>=5.0.0",
+    "SimpleITK>=2.3.0",
+    # --- Config management & experiment tracking ---
+    "hydra-core>=1.3.0",
+    "omegaconf>=2.3.0",
+    "wandb>=0.16.0",
+    # --- Data & evaluation ---
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.11.0",
+    "openpyxl>=3.1.0", # Excel export for inference results
+    # --- Visualization ---
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    # --- Utilities ---
+    "tqdm>=4.65.0",
+    "Pillow>=10.0.0",
+    "blosc2>=2.3.0", # Blosc2 compressed data (.b2nd format)
+    "huggingface-hub>=1.7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",               # Linting
+    "ipython>=8.0.0",
+    "jupyter>=1.0.0",
+]
+
+# ---------------------------------------------------------------------------
+# PyTorch with CUDA must be installed from a custom index.
+# uv handles this via [[tool.uv.index]] + tool.uv.sources.
+# ---------------------------------------------------------------------------
+
+[tool.uv]
+# Ensure PyTorch packages come from the CUDA 12.1 wheel index.
+# Change "cu121" to "cu124" / "cu126" etc. if your CUDA version differs.
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+xformers = { index = "pytorch-cu121" }
+
+# ---------------------------------------------------------------------------
+# Ruff configuration (optional but nice to have)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
