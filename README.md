@@ -60,6 +60,27 @@ After downloading, extract the archive and point `data_root` in `configs/train_p
 
 ---
 
+## Finetuned Model
+
+A Finetuned ViT-B/14 checkpoint on the PDCAD dataset is available on Hugging Face:
+
+> 🤗 **[aaronchoi6/anymc3d-vitb14-pdcad](https://huggingface.co/aaronchoi6/anymc3d-vitb14-pdcad)**
+
+| Detail | Value |
+|--------|-------|
+| Backbone | DINOv2 ViT-B/14 (frozen) |
+| Trainable params | ~1.2M (LoRA + classifier head) |
+| Best val AUROC | 0.90 |
+| Training | 150 epochs, fold 0 |
+
+To use the Finetuned checkpoint for inference:
+
+```bash
+python inference.py --run_dir outputs/checkpoints/anymc3d-vitb14-pdcad_v2_slice_axis3_150ep_fold0
+```
+
+---
+
 ## Installation
 
 **Option A: Using uv (recommended)**
@@ -221,11 +242,18 @@ python inference.py --run_dir outputs/checkpoints/<run_name> --data_root /new/pa
 | `backbone_name` | `dinov2_vitb14` | DINOv2 variant (`vits14`, `vitb14`, `vitl14`) |
 | `lora_rank` | 8 | LoRA rank |
 | `lora_alpha` | 16 | LoRA scaling |
-| `input_size` | 308 | Slice resize resolution |
+| `input_size` | 308 | Slice resize resolution fed to DINOv2 |
+| `slice_axis` | 3 | Axis to extract 2D slices along |
+| `dropout` | 0.1 | Dropout rate |
 | `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
 | `head_lr` | 1e-3 | Learning rate for classifier head |
+| `lr_scheduler` | `cosine` | Learning rate schedule (`cosine` or `constant`) |
+| `focal_gamma` | 2.0 | Focal loss focusing parameter |
+| `focal_alpha` | 0.25 | Focal loss class balancing parameter |
 | `max_epochs` | 150 | Maximum training epochs |
-| `early_stopping_patience` | 40 | Early stopping patience (monitors val loss) |
+| `precision` | `16-mixed` | Mixed precision training |
+| `batch_size` | 2 | Training batch size |
+| `patch_size` | `[308, 308, 70]` | Volume dimensions after preprocessing |
 
 ---
 
