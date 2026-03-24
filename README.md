@@ -28,6 +28,7 @@ AnyMC3D/
 ├── train.py                # Hydra-driven training script
 ├── inference.py            # Inference + metrics + plots
 ├── pdcad_dataset.py        # PDCAD Dataset and DataModule
+├── preprocess.py           # Preprocessing pipeline (MONAI percentile normalization)
 ├── balanced_accuracy.py    # Custom balanced accuracy metric
 ├── pyproject.toml          # Project dependencies (uv / pip)
 ├── configs/
@@ -52,11 +53,11 @@ The PDCAD dataset (Nuclear Medicine (NM) volumes, labels, and splits) is availab
 The archive includes:
 - `labels.json` — binary labels for all cases
 - `splits.json` — train/val split (200 training cases, 100 validation cases)
-- Pre-processed `.b2nd` volumes (Blosc2-compressed, ready for training — no conversion needed)
+- Pre-processed `.npy` volumes (float32, channel-first, ready for training)
 
 After downloading, extract the archive and point `data_root` in `configs/train_pdcad.yaml` to the extracted directory.
 
-> **Note on preprocessing:** The `.b2nd` files are pre-converted from the original `.nii.gz` images using [nnssl](https://github.com/MIC-DKFZ/nnssl). If you need to re-run preprocessing from raw NIfTI files (e.g., to change the voxel spacing or crop parameters), a conversion script is available — open an issue or contact the maintainers.
+> **Note on preprocessing:** The `.npy` files are pre-converted from the original `.nii.gz` images using `preprocess.py`. If you need to re-run preprocessing from raw NIfTI files (e.g., to change normalization parameters), see the [Preprocessing](#preprocessing) section below.
 
 ---
 
@@ -111,18 +112,43 @@ pip install -e .
 
 ---
 
+## Preprocessing
+
+Raw NIfTI volumes are preprocessed with `preprocess.py` before training. The pipeline matches the first author's exact configuration:
+
+1. Load raw `.nii.gz` and reorient to RAS+ canonical orientation
+2. Normalize intensities using **MONAI `ScaleIntensityRangePercentiles`**:
+   ```
+   lower=0, upper=99.5, b_min=0, b_max=1, clip=True, relative=False
+   ```
+3. Reshape to `(1, H, W, S)` channel-first for PyTorch
+4. Save as float32 `.npy`
+
+To run preprocessing on raw NIfTI files:
+
+```bash
+python preprocess.py \
+    --input_dir  /path/to/raw/nifti/folder \
+    --output_dir /path/to/output/folder \
+    --workers    4 \
+    --verify
+```
+
+An optional `--target_size T` flag resizes all volumes to `T × T × T` via trilinear interpolation. For PDCAD, no spatial resizing is applied — volumes preserve their original shape `(1, 300, 300, 70)`.
+
+---
+
 ## PDCAD dataset format
 
-The dataset loader expects the following directory structure:
-
+The dataset loader expects a **flat** directory of preprocessed `.npy` volumes:
 ```
 <data_root>/
-    <case_id>/
-        ses-DEFAULT/
-            <case_id>_0000.b2nd     # Blosc2-compressed NM volume (1, D, H, W) float32
+    <case_id>_0000.npy     # Preprocessed NM volume (1, H, W, S) float32, values in [0, 1]
+    ...
 ```
 
 Two JSON metadata files are also required:
+...
 
 **`labels.json`** — maps each case ID to its binary label:
 ```json
@@ -143,7 +169,7 @@ Two JSON metadata files are also required:
 }
 ```
 
-Volumes are automatically resized to `(1, 128, 128, 128)` and min-max normalized to `[0, 1]` at load time.
+Volumes are stored as float32 arrays with values in `[0, 1]`, normalized at preprocessing time using MONAI `ScaleIntensityRangePercentiles` (0th–99.5th percentile clipping).
 
 ---
 
@@ -242,8 +268,8 @@ python inference.py --run_dir outputs/checkpoints/<run_name> --data_root /new/pa
 | `backbone_name` | `dinov2_vitb14` | DINOv2 variant (`vits14`, `vitb14`, `vitl14`) |
 | `lora_rank` | 8 | LoRA rank |
 | `lora_alpha` | 16 | LoRA scaling |
-| `input_size` | 308 | Slice resize resolution fed to DINOv2 |
-| `slice_axis` | 3 | Axis to extract 2D slices along |
+| `input_size` | 308 | Slice resize resolution fed to DINOv2 (must be a multiple of 14) |
+| `slice_axis` | 3 | Axis to extract 2D slices along (axis 3 = 70 slices for PDCAD) |
 | `dropout` | 0.1 | Dropout rate |
 | `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
 | `head_lr` | 1e-3 | Learning rate for classifier head |
@@ -253,7 +279,7 @@ python inference.py --run_dir outputs/checkpoints/<run_name> --data_root /new/pa
 | `max_epochs` | 150 | Maximum training epochs |
 | `precision` | `16-mixed` | Mixed precision training |
 | `batch_size` | 2 | Training batch size |
-| `patch_size` | `[308, 308, 70]` | Volume dimensions after preprocessing |
+| `patch_size` | `[308, 308, 70]` | Volume dimensions after preprocessing (H × W × S, no spatial resizing applied) |
 
 ---
 
