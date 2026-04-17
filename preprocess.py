@@ -1,10 +1,8 @@
 """
 AnyMC3D-Compatible Preprocessing Pipeline (v3 — MONAI Percentile Normalization)
 ================================================================================
-Uses MONAI's ScaleIntensityRangePercentilesd to exactly match the first author's
-preprocessing for PDCAD.
+Uses MONAI's ScaleIntensityRangePercentilesd preprocessing for PDCAD.
 
-Author's tip:
     ScaleIntensityRangePercentilesd(
         keys=image_keys, lower=0, upper=99.5,
         b_min=0, b_max=1, clip=True, relative=False
@@ -76,8 +74,7 @@ def load_nifti(path: Path) -> np.ndarray:
 
 def make_percentile_transform(lower_pct: float = 0, upper_pct: float = 99.5):
     """
-    Create the MONAI percentile normalization transform matching the
-    first author's exact configuration:
+    Create the MONAI percentile normalization transform:
 
         ScaleIntensityRangePercentilesd(
             keys=image_keys, lower=0, upper=99.5,
