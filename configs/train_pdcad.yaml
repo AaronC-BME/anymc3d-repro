@@ -9,11 +9,11 @@ data:
   labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json"
   splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json"
   fold: 0
-  batch_size: 2                     # author: batch_size: 2
-  num_workers: 8                    # author: num_workers: 8
+  batch_size: 2                     
+  num_workers: 8                    
   augment: true
   dataset: "pdcad"
-  patch_size: [308, 308, 70]        # author: patch_size: [308, 308, 70]
+  patch_size: [308, 308, 70]        
 
 # ── Optimizer ─────────────────────────────────────────────────────────────────
 # (defaults come from model config, but can be overridden here)
@@ -21,7 +21,7 @@ optimizer:
   lr: 1e-4
   weight_decay: 1e-4
   warmup_epochs: 0
-  lr_scheduler: "constant"          # no scheduler mentioned in author's config
+  lr_scheduler: "constant"          
 
 # ── Loss ──────────────────────────────────────────────────────────────────────
 loss:
@@ -30,13 +30,13 @@ loss:
 
 # ── Training ──────────────────────────────────────────────────────────────────
 training:
-  max_epochs: 150                   # author: max_epoch: 150
-  precision: "16-mixed"             # author: amp: True
+  max_epochs: 150                  
+  precision: "16-mixed"             
   early_stopping_patience: 150
   save_top_k: 3
   log_every_n_steps: 5
-  seed: 0                           # author: seed: 0
+  seed: 0                           
 
 # ── W&B ───────────────────────────────────────────────────────────────────────
 wandb:
-  project: "pdcad-anymc3d"                  # author: wandb_project_name: PDCAD
+  project: "pdcad-anymc3d"                  
