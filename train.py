@@ -12,6 +12,9 @@ Usage:
     python train.py model=rsna_effb4                        # RSNA CNN EfficientNet-B4
     python train.py model=rsna_effb0 data.fold=1            # different fold
     python train.py model=anymc3d_vitl model.run_name=myrun # override run name
+    python train.py model=anymc3d_backbone_vitb             # AnyMC3D + vision blocks
+
+    nohup python train.py --config-name train_pdcad model=anymc3d_backbone > logs/PDCAD_anymc3d_backbone_1VisBlck_LoRALR_1e-4_Headlr_5e-4.log 2>&1 &
 """
 
 import hydra
@@ -47,8 +50,8 @@ def get_datamodule(cfg, fold: int):
             patch_size  = patch_size,          # [308, 308, 70] from config
         )
     elif cfg.data.dataset == "meningioma_t1c":
-        from meningioma_t1c_dataset import MeningiomaT1cDataModule
-        return MeningiomaT1cDataModule(
+        from meningioma_t1c_dataset import MeningiomaDataModule
+        return MeningiomaDataModule(
             data_root   = cfg.data.data_root,
             labels_path = cfg.data.labels_path,
             splits_path = cfg.data.splits_path,
@@ -92,6 +95,29 @@ def get_model(cfg):
             focal_alpha       = cfg.loss.focal_alpha,
             max_epochs        = cfg.training.max_epochs,
         )
+
+    # ── NEW: V-JEPA 2 / 2.1 Strategy A ────────────────────────────────────
+    elif cfg.model.arch == "vjepa2_anymc3d":
+        from vjepa2_anymc3d import VJEPA2LightningModule
+        return VJEPA2LightningModule(
+            num_classes       = cfg.model.num_classes,
+            hub_name          = cfg.model.hub_name,        # e.g. "vjepa2_1_vit_base_384"
+            lora_rank         = cfg.model.lora_rank,
+            lora_alpha        = cfg.model.lora_alpha,
+            num_frames        = cfg.model.num_frames,
+            slice_axis        = cfg.model.slice_axis,
+            dropout           = cfg.model.dropout,
+            lora_lr           = cfg.optimizer.lora_lr,
+            lora_weight_decay = cfg.optimizer.lora_weight_decay,
+            head_lr           = cfg.optimizer.head_lr,
+            head_weight_decay = cfg.optimizer.head_weight_decay,
+            warmup_epochs     = cfg.optimizer.warmup_epochs,
+            lr_scheduler      = cfg.optimizer.lr_scheduler,
+            focal_gamma       = cfg.loss.focal_gamma,
+            focal_alpha       = cfg.loss.focal_alpha,
+            max_epochs        = cfg.training.max_epochs,
+        )
+
     elif cfg.model.arch == "rsna_cnn":
         from rsna_kaggle_model import RSNAKaggleLightningModule
         return RSNAKaggleLightningModule(
@@ -112,8 +138,67 @@ def get_model(cfg):
             focal_alpha   = cfg.loss.focal_alpha,
             max_epochs    = cfg.training.max_epochs,
         )
+
+    elif cfg.model.arch == "anymc3d_v2":
+        from anymc3d_v2 import AnyMC3DLightningModule
+        return AnyMC3DLightningModule(
+            num_classes       = cfg.model.num_classes,
+            modalities        = list(cfg.model.modalities),
+            backbone_name     = cfg.model.backbone_name,
+            lora_rank         = cfg.model.lora_rank,
+            lora_alpha        = cfg.model.lora_alpha,
+            input_size        = cfg.model.input_size,
+            dropout           = cfg.model.dropout,
+            slice_axis        = cfg.model.slice_axis,
+            lora_lr           = cfg.optimizer.lora_lr,
+            lora_weight_decay = cfg.optimizer.lora_weight_decay,
+            head_lr           = cfg.optimizer.head_lr,
+            head_weight_decay = cfg.optimizer.head_weight_decay,
+            warmup_epochs     = cfg.optimizer.warmup_epochs,
+            lr_scheduler      = cfg.optimizer.lr_scheduler,
+            focal_gamma       = cfg.loss.focal_gamma,
+            focal_alpha       = cfg.loss.focal_alpha,
+            max_epochs        = cfg.training.max_epochs,
+        )
+
+    # ── AnyMC3D Backbone: AnyMC3D + two learnable vision blocks (dino.txt) ──
+    elif cfg.model.arch == "anymc3d_backbone":
+        from anymc3d_backbone import AnyMC3DLightningModule
+        return AnyMC3DLightningModule(
+            num_classes          = cfg.model.num_classes,
+            modalities           = list(cfg.model.modalities),
+            backbone_name        = cfg.model.backbone_name,
+            lora_rank            = cfg.model.lora_rank,
+            lora_alpha           = cfg.model.lora_alpha,
+            input_size           = cfg.model.input_size,
+            dropout              = cfg.model.dropout,
+            slice_axis           = cfg.model.slice_axis,
+            # Vision block specific params — new in anymc3d_backbone
+            vision_blocks        = cfg.model.vision_blocks,
+            mlp_ratio            = cfg.model.mlp_ratio,
+            block_dropout        = cfg.model.block_dropout,
+            use_patch_concat     = cfg.model.use_patch_concat,
+            use_25d              = cfg.model.use_25d,
+            use_patch_attn_pool  = cfg.model.use_patch_attn_pool,
+            # Optimizer — vision blocks get their own LR group
+            lora_lr              = cfg.optimizer.lora_lr,
+            lora_weight_decay    = cfg.optimizer.lora_weight_decay,
+            vision_lr            = cfg.optimizer.vision_lr,
+            vision_weight_decay  = cfg.optimizer.vision_weight_decay,
+            head_lr              = cfg.optimizer.head_lr,
+            head_weight_decay    = cfg.optimizer.head_weight_decay,
+            warmup_epochs        = cfg.optimizer.warmup_epochs,
+            lr_scheduler         = cfg.optimizer.lr_scheduler,
+            focal_gamma          = cfg.loss.focal_gamma,
+            focal_alpha          = cfg.loss.focal_alpha,
+            max_epochs           = cfg.training.max_epochs,
+        )
+
     else:
-        raise ValueError(f"Unknown arch '{cfg.model.arch}'. Choose from: anymc3d, rsna_cnn")
+        raise ValueError(
+            f"Unknown arch '{cfg.model.arch}'. "
+            f"Choose from: anymc3d, anymc3d_v2, anymc3d_backbone, vjepa2_anymc3d, rsna_cnn"
+        )
 
 
 def train_one_fold(cfg, fold: int, multi_fold: bool = False):

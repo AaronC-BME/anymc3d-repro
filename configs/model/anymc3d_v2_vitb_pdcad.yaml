@@ -1,0 +1,41 @@
+# @package _global_
+
+model:
+  arch: "anymc3d_v2"
+  run_name: "anymc3d_v2-vitb14-pdcad_v2_slice_axis3_150ep_cosine_DA_LoRA_lr_1e-6_Headlr_1e-5"   
+  modalities: ["nm"]                # single modality, single view
+  backbone_name: "dinov2_vitb14"
+  num_classes: 2                    # binary: presence vs absence
+  lora_rank: 8
+  lora_alpha: 16
+  input_size: 308
+  dropout: 0.1
+  slice_axis: 3
+
+data:
+  # Point to the NEW percentile-normalized data (from preprocess_anymc3d_v2.py)
+  data_root:   "/home/jma/Documents/projects/aaron/AnyMC3D/preprocessed_data/PDCAD"
+  labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json"
+  splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json"
+  fold: 0
+  batch_size: 2
+  num_workers: 8
+  augment: True
+  dataset: "pdcad"
+  patch_size: [308, 308, 70]  
+
+optimizer:
+  lora_lr: 0.0001
+  lora_weight_decay: 1.0e-05
+  head_lr: 0.0005
+  head_weight_decay: 0.0001      
+  warmup_epochs: 10
+  lr_scheduler: "cosine"          
+
+loss:
+  focal_gamma: 2.0                  
+  focal_alpha: 0.25                 
+
+training:
+  max_epochs: 150                   
+  seed: 0                           
