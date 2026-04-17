@@ -114,7 +114,7 @@ pip install -e .
 
 ## Preprocessing
 
-Raw NIfTI volumes are preprocessed with `preprocess.py` before training. The pipeline matches the first author's exact configuration:
+Raw NIfTI volumes are preprocessed with `preprocess.py` before training. The pipeline matches the exact configuration:
 
 1. Load raw `.nii.gz` and reorient to RAS+ canonical orientation
 2. Normalize intensities using **MONAI `ScaleIntensityRangePercentiles`**:
