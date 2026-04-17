@@ -3,9 +3,6 @@ AnyMC3D - Scalable 3D Medical Image Classifier adapted from 2D Foundation Models
 Based on: "Revisiting 2D Foundation Models for Scalable 3D Medical Image Classification"
          Liu et al., 2025 (arXiv:2512.12887)
 
-Adapted for Meningioma Molecular Subtype Classification (MG1-MG4)
-using T1-contrast and T2-weighted MRI data.
-
 Usage:
     # Single modality
     model = AnyMC3D(num_classes=4, modalities=['t1c'])
@@ -212,14 +209,6 @@ class MultiModalFusion(nn.Module):
 class AnyMC3D(nn.Module):
     """
     AnyMC3D: Scalable 3D classifier adapted from 2D Foundation Models.
-
-    For meningioma molecular subtype classification (MG1-MG4):
-      - Accepts T1c and/or T2w MRI volumes
-      - Frozen DINOv2 backbone with per-modality LoRA adapters (~1.2M trainable)
-      - Multi-plane slice encoding (axial + coronal + sagittal), ALL slices used
-      - Permutation-invariant attention pooling for slice fusion
-      - Optional multi-modal fusion via a second attention pool
-      - Linear classification head
 
     Trainable parameters per modality (~1.2M):
         LoRA adapters + attention pool query + (fusion query) + classifier head
