@@ -4,6 +4,9 @@ checkpoints/
 *.pt
 *.pth
 
+# VJEPA2.1 checkpoints
+vjepa_2_1_checkpoint/
+
 # Experiment tracking
 wandb/
 outputs/
@@ -27,3 +30,32 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data & preprocessed volumes
+preprocessed_data/
+*.npy
+
+# Virtual environment
+.venv/
+
+# Hydra
+.hydra/
+
+# External results
+hans_results/
+
+#One-off scripts
+check_image_sizes.py
+check_npy_sizes.py
+check_orientations.py
+copy_val_images.py
+evaluate_predictions.py
+fix_nii.py
+huggingface.py
+inference_5_folds.py
+inference.py
+meningioma_holdout_dataset.py
+meningioma_t1c_dataset.py
+nifti_image_check.py
+preprocess_z_norm.py
+rsna_kaggle_model.py

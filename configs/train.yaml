@@ -1,39 +1,18 @@
+# ---------------------------------------------------------------
+# Main training config
+# ---------------------------------------------------------------
+# The model file now bundles its matching optimizer and loss via
+# `# @package _global_`, so those groups have dropped out of the
+# defaults list. Picking `model=anymc3d` is enough to get all three.
+#
+# Override any group from the command line:
+#   python train.py                             # uses defaults below
+#   python train.py data=pdcad model=anymc3d    # explicit (same thing)
+#   python train.py model=vjepa2_anymc3d        # swap model (+ its optimizer+loss)
+#   python train.py optimizer.lora_lr=2e-4      # override individual keys still works
+#   python train.py loss.focal_alpha=0.25       # ditto
+
 defaults:
-  - model: anymc3d_vitl    # swap to: anymc3d_vitb, rsna_effb0, rsna_effb4
   - _self_
-
-# ── Data ──────────────────────────────────────────────────────────────────────
-data:
-  data_root: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/nnsslPlans_onemmiso/Dataset006_T1c_cropped_20260115/Dataset006_T1c_cropped_20260115"
-  labels_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/labels.json"
-  splits_path: "/home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset006_T1c_cropped_20260115/splits_5_folds_hold_out.json"
-  fold: [0, 1, 2, 3, 4]   # list → run all folds; single int → run one fold
-  batch_size: 2
-  num_workers: 4
-  augment: true
-  dataset: "meningioma"    # "meningioma", "meningioma_wholebrain", or "pdcad"
-
-# ── Optimizer ─────────────────────────────────────────────────────────────────
-optimizer:
-  lr: 1e-4
-  weight_decay: 1e-4
-  warmup_epochs: 0
-  lr_scheduler: "cosine"   # overridden by model config for anymc3d
-
-# ── Loss ──────────────────────────────────────────────────────────────────────
-loss:
-  focal_gamma: 2.0
-  focal_alpha: 0.25
-
-# ── Training ──────────────────────────────────────────────────────────────────
-training:
-  max_epochs: 200
-  precision: "16-mixed"
-  early_stopping_patience: 40
-  save_top_k: 3
-  log_every_n_steps: 5
-  seed: 42
-
-# ── W&B ───────────────────────────────────────────────────────────────────────
-wandb:
-  project: "anymc3d"
+  - data:     pdcad
+  - model:    anymc3d_vitb

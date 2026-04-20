@@ -1,5 +1,10 @@
 """
-Inference Script for AnyMC3D / RSNA-CNN
+Inference Script for AnyMC3D / RSNA-CNN / V-JEPA 2.1
+
+# TODO: update for refactored codebase
+# - model imports moved to model_arch/anymc3d.py and model_arch/vjepa2_anymc3d.py
+# - data loading moved to data_modules/pdcad_dataset.py
+# - configs restructured: training params now in model YAML, no separate training/wandb groups
 
 Point to a run directory and it auto-discovers the config and best checkpoint:
 
@@ -15,6 +20,7 @@ Optional overrides:
     python inference.py --run_dir ... --split val
     python inference.py --run_dir ... --checkpoint specific_epoch.ckpt  # pick a specific ckpt
     python inference.py --run_dir ... --fold 1 --data_root /new/path
+
 """
 
 import argparse
@@ -213,9 +219,21 @@ def load_model(checkpoint_path, cfg):
         from anymc3d import AnyMC3DLightningModule
         model = AnyMC3DLightningModule.load_from_checkpoint(
             str(checkpoint_path), map_location='cpu')
+    elif arch == "vjepa2_anymc3d":
+        from vjepa2_anymc3d import VJEPA2LightningModule
+        model = VJEPA2LightningModule.load_from_checkpoint(
+            str(checkpoint_path), map_location='cpu')
     elif arch == "rsna_cnn":
         from rsna_kaggle_model import RSNAKaggleLightningModule
         model = RSNAKaggleLightningModule.load_from_checkpoint(
+            str(checkpoint_path), map_location='cpu')
+    elif arch == "anymc3d_v2":
+        from anymc3d_v2 import AnyMC3DLightningModule
+        model = AnyMC3DLightningModule.load_from_checkpoint(
+            str(checkpoint_path), map_location='cpu')
+    elif arch == "anymc3d_backbone":
+        from anymc3d_backbone import AnyMC3DLightningModule
+        model = AnyMC3DLightningModule.load_from_checkpoint(
             str(checkpoint_path), map_location='cpu')
     else:
         raise ValueError(f"Unknown arch: {arch}")
@@ -230,8 +248,10 @@ def run_inference(model, dataloader, device, arch):
     all_case_ids, all_labels, all_probs = [], [], []
     for volumes, labels, case_ids in dataloader:
         volumes = volumes.to(device)
-        if arch == "anymc3d":
+        if arch in ("anymc3d", "anymc3d_v2", "anymc3d_backbone"):
             logits, _ = model.model({model.modalities[0]: volumes})
+        elif arch == "vjepa2_anymc3d":
+            logits = model.model(volumes)
         else:
             logits = model.model(volumes)
         probs = F.softmax(logits, dim=1).cpu().numpy()
@@ -298,7 +318,7 @@ def main():
     dataset_type = cfg.data.get('dataset', 'meningioma')
 
     if dataset_type == 'pdcad':
-        from pdcad_dataset import PDCADDataset
+        from aaron.AnyMC3D.data_modules.pdcad_dataset import PDCADDataset
         global CLASS_NAMES
         CLASS_NAMES = ['Class0', 'Class1']
         dataset = PDCADDataset(

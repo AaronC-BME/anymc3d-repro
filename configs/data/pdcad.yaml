@@ -1,0 +1,21 @@
+# Config merged under cfg.data when selected via `data=pdcad`.
+# NOTE: no outer `data:` wrapper — Hydra adds that automatically for
+# files inside configs/data/. Add `# @package _global_` at the top
+# only if you deliberately want to move this block elsewhere in cfg.
+
+# ── Metadata and flags — top-level under cfg.data ────────────────────────
+name:    PDCAD_Classification   # displayed in logs / WandB
+dataset: pdcad                  # routing key read by train.py
+augment: true                   # flag read by attach_augmentation()
+
+# ── The DataModule itself — instantiated by hydra.utils.instantiate ──────
+# Only _target_ + actual PDCADDataModule.__init__ kwargs belong in here.
+module:
+  _target_:    data_modules.pdcad_dataset.PDCADDataModule
+  data_root:   /home/jma/Documents/projects/aaron/AnyMC3D/preprocessed_data/PDCAD
+  labels_path: /home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json
+  splits_path: /home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json
+  fold:        0                # overridden at instantiation for multi-fold runs
+  batch_size:  2
+  num_workers: 8
+  patch_size:  [300, 300, 70]

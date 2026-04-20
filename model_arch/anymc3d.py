@@ -240,17 +240,21 @@ class ModalityEncoder(nn.Module):
         vision_blocks:      int   = 2,
         mlp_ratio:          float = 4.0,
         block_dropout:      float = 0.0,
-        # [NEW v3]
+        # AnyMC3D feature
+        use_slice_attn_pool: bool = True,   # True: AttentionPool over slices
+
+        # [Optional features]
         use_patch_concat:   bool  = False,
         use_25d:            bool  = False,
-        use_patch_attn_pool: bool = False,   # True: AttentionPool over patches (like v2)
+        use_patch_attn_pool: bool = False,   # True: AttentionPool over patches
                                               # False: mean pooling (default)
-                                              # only meaningful when use_patch_concat=True
+
     ):
         super().__init__()
         self.embed_dim            = embed_dim
         self.input_size           = input_size
         self.slice_axis           = slice_axis
+        self.use_slice_attn_pool  = use_slice_attn_pool
         self.use_patch_concat     = use_patch_concat
         self.use_25d              = use_25d
         self.use_patch_attn_pool  = use_patch_attn_pool
@@ -267,19 +271,20 @@ class ModalityEncoder(nn.Module):
         )
         self.adapted_backbone = get_peft_model(backbone, lora_config)
 
-        self.vision_blocks = VisionBlocks(
-            embed_dim  = embed_dim,
-            num_blocks = vision_blocks,
-            mlp_ratio  = mlp_ratio,
-            dropout    = block_dropout,
-        )
+        if vision_blocks > 0:
+            self.vision_blocks = VisionBlocks(
+                embed_dim  = embed_dim,
+                num_blocks = vision_blocks,
+                mlp_ratio  = mlp_ratio,
+                dropout    = block_dropout,
+            )
+
+        if use_slice_attn_pool:
+            self.pool = AttentionPool(self.slice_embed_dim)
 
         # Optional learned patch pooling (only instantiated when both flags are active)
         if use_patch_concat and use_patch_attn_pool:
             self.patch_pool = AttentionPool(embed_dim)
-
-        # Slice-level AttentionPool operates on slice_embed_dim (D or 2D)
-        self.pool = AttentionPool(self.slice_embed_dim)
 
     def encode_slices(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -304,7 +309,8 @@ class ModalityEncoder(nn.Module):
             tokens = out                                # [B, 1+N, D]
 
         # Pass full token sequence through two learnable vision blocks
-        tokens = self.vision_blocks(tokens)             # [B, 1+N, D]
+        if hasattr(self, 'vision_blocks'):
+            tokens = self.vision_blocks(tokens)             # [B, 1+N, D]
 
         # Extract adapted CLS token c' from position 0
         cls_adapted = tokens[:, 0]                      # [B, D]
@@ -400,11 +406,14 @@ class ModalityEncoder(nn.Module):
         else:
             embeddings = self.encode_slices(flat)       # (B*n, slice_embed_dim)
 
-        H_seq = rearrange(
-            embeddings, '(b s) d -> b s d', b=B
-        )                                               # (B, n, slice_embed_dim)
+        H_seq = rearrange(embeddings, '(b s) d -> b s d', b=B)  # (B, S, D)
 
-        v, a = self.pool(H_seq)    # (B, slice_embed_dim), (B, n_slices)
+        if self.use_slice_attn_pool:
+            v, a = self.pool(H_seq)                          # paper method
+        else:
+            v = H_seq.mean(dim=1)                            # mean pooling ablation
+            a = torch.ones(B, H_seq.shape[1],
+                        device=H_seq.device) / H_seq.shape[1]  # uniform weights
         return v, a
 
 
@@ -465,16 +474,17 @@ class AnyMC3D(nn.Module):
         self,
         num_classes:        int   = 4,
         modalities:         list  = ['t1c'],
-        backbone_name:      str   = 'dinov2_vitl14',
+        backbone_name:      str   = 'dinov2_vitb14',
         lora_rank:          int   = 8,
         lora_alpha:         int   = 16,
         input_size:         int   = 224,
-        dropout:            float = 0.1,
+        cls_head_dropout:   float = 0.1,
         slice_axis:         int   = 3,
         vision_blocks:      int   = 2,
         mlp_ratio:          float = 4.0,
         block_dropout:      float = 0.0,
         # [NEW v3]
+        use_slice_attn_pool: bool  = True,
         use_patch_concat:   bool  = False,
         use_25d:            bool  = False,
         use_patch_attn_pool: bool = False,
@@ -484,6 +494,7 @@ class AnyMC3D(nn.Module):
         self.num_classes         = num_classes
         self.modalities          = modalities
         self.backbone_name       = backbone_name
+        self.use_slice_attn_pool = use_slice_attn_pool
         self.use_patch_concat    = use_patch_concat
         self.use_25d             = use_25d
         self.use_patch_attn_pool = use_patch_attn_pool
@@ -509,6 +520,7 @@ class AnyMC3D(nn.Module):
                 vision_blocks        = vision_blocks,
                 mlp_ratio            = mlp_ratio,
                 block_dropout        = block_dropout,
+                use_slice_attn_pool  = use_slice_attn_pool,
                 use_patch_concat     = use_patch_concat,
                 use_25d              = use_25d,
                 use_patch_attn_pool  = use_patch_attn_pool,
@@ -524,24 +536,26 @@ class AnyMC3D(nn.Module):
 
         # Classification head — input is slice_embed_dim
         self.classifier = nn.Sequential(
-            nn.Dropout(dropout),
+            nn.Dropout(cls_head_dropout),
             nn.Linear(slice_embed_dim, num_classes),
         )
 
         n_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        n_vision_block_params = sum(
-            p.numel()
-            for enc in self.encoders.values()
-            for p in enc.vision_blocks.parameters()
-            if p.requires_grad
-        )
+        if vision_blocks > 0:
+            n_vision_block_params = sum(
+                p.numel()
+                for enc in self.encoders.values()
+                for p in enc.vision_blocks.parameters()
+                if p.requires_grad
+            )
         print(f"\nAnyMC3D Backbone initialized:")
         print(f"  Modalities:             {modalities}")
         print(f"  Classes:                {num_classes}")
         print(f"  Backbone:               {backbone_name} (embed_dim={embed_dim}, frozen)")
         print(f"  Vision blocks:          {vision_blocks} x transformer block (trainable)")
-        print(f"  Vision block params:    {n_vision_block_params:,} per modality")
+        print(f"  Vision block params:    {n_vision_block_params:,} per modality" if vision_blocks > 0 else "0 (no vision blocks)")
         print(f"  Slice embed dim:        {slice_embed_dim} (patch_concat={use_patch_concat})")
+        print(f"  Slice pooling:          {'AttentionPool' if use_slice_attn_pool else 'mean'} (use_slice_attn_pool={use_slice_attn_pool})")
         print(f"  Patch pooling:          {'AttentionPool' if use_patch_attn_pool else 'mean'} (use_patch_attn_pool={use_patch_attn_pool})")
         print(f"  2.5D input:             {use_25d}")
         print(f"  Total trainable params: {n_trainable:,}")
@@ -602,12 +616,13 @@ class AnyMC3DLightningModule(L.LightningModule):
         lora_rank:            int   = 8,
         lora_alpha:           int   = 16,
         input_size:           int   = 224,
-        dropout:              float = 0.1,
+        cls_head_dropout:              float = 0.1,
         slice_axis:           int   = 3,
         vision_blocks:        int   = 2,
         mlp_ratio:            float = 4.0,
         block_dropout:        float = 0.0,
         # [NEW v3]
+        use_slice_attn_pool:  bool  = True,
         use_patch_concat:     bool  = False,
         use_25d:              bool  = False,
         use_patch_attn_pool:  bool  = False,
@@ -624,6 +639,15 @@ class AnyMC3DLightningModule(L.LightningModule):
         # Focal loss
         focal_gamma:          float = 2.0,
         focal_alpha:          float = 0.25,
+        # Training hyperparameters
+        seed:                 int   = 0,
+        precision:            str   = "16-mixed",
+        early_stopping_patience: int = 50,
+        save_top_k:           int   = 3,
+        log_every_n_steps:    int   = 10,
+        #WandB logging
+        project:              str   = "AnyMC3D",
+        run_name:             str   = "AnyMC3D_Run",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -635,11 +659,12 @@ class AnyMC3DLightningModule(L.LightningModule):
             lora_rank            = lora_rank,
             lora_alpha           = lora_alpha,
             input_size           = input_size,
-            dropout              = dropout,
+            cls_head_dropout     = cls_head_dropout,
             slice_axis           = slice_axis,
             vision_blocks        = vision_blocks,
             mlp_ratio            = mlp_ratio,
             block_dropout        = block_dropout,
+            use_slice_attn_pool  = use_slice_attn_pool,
             use_patch_concat     = use_patch_concat,
             use_25d              = use_25d,
             use_patch_attn_pool  = use_patch_attn_pool,

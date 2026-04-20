@@ -4,19 +4,22 @@ Scalable 3D Medical Image Classifier adapted from 2D Foundation Models.
 
 Based on: *"Revisiting 2D Foundation Models for Scalable 3D Medical Image Classification"* — Liu et al., 2025 ([arXiv:2512.12887](https://arxiv.org/abs/2512.12887))
 
-This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes.
+This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes, and 4-class molecular subtype classification on the **Meningioma T1c** dataset.
 
 ---
 
 ## How it works
 
-AnyMC3D wraps a frozen DINOv2 backbone with lightweight LoRA adapters (~1.2M trainable parameters). For each 3D volume:
+AnyMC3D wraps a frozen DINOv2 backbone with lightweight LoRA adapters. For each 3D volume:
 
-1. All 2D slices are extracted along the axial, coronal, and sagittal planes
+1. All 2D slices are extracted along the chosen axis (axial by default)
 2. Each slice is encoded with the LoRA-adapted DINOv2 (ViT-B/14 or ViT-L/14)
-3. An attention pooling module aggregates slices within each plane
-4. The three plane embeddings are mean-fused into a single volume embedding
-5. A linear head produces the final class prediction
+3. An attention pooling module aggregates slice embeddings into a single volume embedding
+4. A linear head produces the final class prediction
+
+An alternative backbone using **V-JEPA 2.1** (Meta's spatiotemporal ViT-B) is also in development, treating the slice axis natively as a temporal dimension via 3D-RoPE.
+
+> ⚠️ **V-JEPA 2.1 integration is a work in progress.** `model_arch/vjepa2_anymc3d.py` and `configs/model/vjepa21_vitb.yaml` are not yet fully refactored and should not be used for training.
 
 ---
 
@@ -24,22 +27,33 @@ AnyMC3D wraps a frozen DINOv2 backbone with lightweight LoRA adapters (~1.2M tra
 
 ```
 AnyMC3D/
-├── anymc3d.py              # Model definition (AnyMC3D + Lightning module)
-├── train.py                # Hydra-driven training script
-├── inference.py            # Inference + metrics + plots
-├── pdcad_dataset.py        # PDCAD Dataset and DataModule
-├── preprocess.py           # Preprocessing pipeline (MONAI percentile normalization)
-├── balanced_accuracy.py    # Custom balanced accuracy metric
-├── pyproject.toml          # Project dependencies (uv / pip)
+├── train.py                        # Hydra-driven training script
+├── inference_online.py             # Inference + metrics + plots (TODO: update for refactor)
+├── inference_nifti.py              # Inference directly from raw NIfTI files
+├── balanced_accuracy.py            # Custom balanced accuracy metric
+├── preprocess.py                   # Preprocessing pipeline (MONAI percentile normalization)
+├── pyproject.toml                  # Project dependencies (uv / pip)
+├── uv.lock                         # Locked dependency versions
+│
+├── model_arch/
+│   ├── __init__.py
+│   ├── anymc3d.py                  # DINOv2-based model + Lightning module
+│   └── vjepa2_anymc3d.py          # V-JEPA 2.1-based model + Lightning module
+│
+├── data_modules/
+│   ├── __init__.py
+│   ├── pdcad_dataset.py            # PDCAD Dataset and DataModule
+│   └── data_augmentation.py        # MONAI augmentation pipeline (nnU-Net style)
+│
 ├── configs/
-│   ├── train_pdcad.yaml    # Top-level PDCAD training config
+│   ├── train.yaml                  # Top-level training config (defaults list)
+│   ├── data/
+│   │   └── pdcad.yaml              # PDCAD data config
 │   └── model/
-│       ├── anymc3d_vitb_pdcad.yaml   # ViT-B model config for PDCAD
-│       └── anymc3d_vitl.yaml         # ViT-L model config
-└── outputs/                # All training and inference outputs
-    ├── checkpoints/        # Model checkpoints (per run)
-    ├── predictions/        # Inference CSVs and plots
-    └── logs/               # W&B local logs and Hydra outputs
+│       ├── anymc3d_vitb.yaml       # DINOv2 ViT-B/14 model config for PDCAD
+│       └── vjepa21_vitb.yaml       # V-JEPA 2.1 ViT-B model config for PDCAD
+│
+└── checkpoints/                    # Model checkpoints (per run, gitignored)
 ```
 
 ---
@@ -52,33 +66,27 @@ The PDCAD dataset (Nuclear Medicine (NM) volumes, labels, and splits) is availab
 
 The archive includes:
 - `labels.json` — binary labels for all cases
-- `splits.json` — train/val split (200 training cases, 100 validation cases)
+- `splits.json` — train/val/test splits
 - Pre-processed `.npy` volumes (float32, channel-first, ready for training)
 
-After downloading, extract the archive and point `data_root` in `configs/train_pdcad.yaml` to the extracted directory.
+After downloading, point `data_root`, `labels_path`, and `splits_path` in `configs/data/pdcad.yaml` to the extracted directory.
 
-> **Note on preprocessing:** The `.npy` files are pre-converted from the original `.nii.gz` images using `preprocess.py`. If you need to re-run preprocessing from raw NIfTI files (e.g., to change normalization parameters), see the [Preprocessing](#preprocessing) section below.
+> **Note on preprocessing:** The `.npy` files are pre-converted from the original `.nii.gz` images using `preprocess.py`. If you need to re-run preprocessing from raw NIfTI files (e.g. to change normalization parameters), see the [Preprocessing](#preprocessing) section below.
 
 ---
 
 ## Finetuned Model
 
-A Finetuned ViT-B/14 checkpoint on the PDCAD dataset is available on Hugging Face:
+A finetuned ViT-B/14 checkpoint on the PDCAD dataset is available on Hugging Face:
 
 > 🤗 **[aaronchoi6/anymc3d-vitb14-pdcad](https://huggingface.co/aaronchoi6/anymc3d-vitb14-pdcad)**
 
 | Detail | Value |
 |--------|-------|
 | Backbone | DINOv2 ViT-B/14 (frozen) |
-| Trainable params | ~1.2M (LoRA + classifier head) |
+| Trainable params | ~455K (LoRA + classifier head) |
 | Best val AUROC | 0.90 |
 | Training | 150 epochs, fold 0 |
-
-To use the Finetuned checkpoint for inference:
-
-```bash
-python inference.py --run_dir outputs/checkpoints/anymc3d-vitb14-pdcad_v2_slice_axis3_150ep_fold0
-```
 
 ---
 
@@ -92,15 +100,9 @@ uv sync
 
 This creates a `.venv`, resolves all dependencies (including PyTorch with CUDA 12.1), and installs everything in one step.
 
-To run scripts:
-```bash
-uv run python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad
-```
-
-Or activate the environment manually:
+Activate the environment:
 ```bash
 source .venv/bin/activate
-python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad
 ```
 
 **Option B: Using pip**
@@ -114,7 +116,7 @@ pip install -e .
 
 ## Preprocessing
 
-Raw NIfTI volumes are preprocessed with `preprocess.py` before training. The pipeline matches the exact configuration:
+Raw NIfTI volumes are preprocessed with `preprocess.py` before training. The pipeline:
 
 1. Load raw `.nii.gz` and reorient to RAS+ canonical orientation
 2. Normalize intensities using **MONAI `ScaleIntensityRangePercentiles`**:
@@ -134,7 +136,7 @@ python preprocess.py \
     --verify
 ```
 
-An optional `--target_size T` flag resizes all volumes to `T × T × T` via trilinear interpolation. For PDCAD, no spatial resizing is applied — volumes preserve their original shape `(1, 300, 300, 70)`.
+For PDCAD, no spatial resizing is applied — volumes preserve their original shape `(1, 300, 300, 70)`.
 
 ---
 
@@ -148,7 +150,6 @@ The dataset loader expects a **flat** directory of preprocessed `.npy` volumes:
 ```
 
 Two JSON metadata files are also required:
-...
 
 **`labels.json`** — maps each case ID to its binary label:
 ```json
@@ -159,127 +160,94 @@ Two JSON metadata files are also required:
 }
 ```
 
-**`splits.json`** — defines the train/val split:
+**`splits.json`** — defines the train/val/test splits per fold:
 ```json
 {
     "0": {
         "train": ["case_001", "case_002", ...],
-        "val":   ["case_010", "case_011", ...]
+        "val":   ["case_010", "case_011", ...],
+        "test":  ["case_020", "case_021", ...]
     }
 }
 ```
 
-Volumes are stored as float32 arrays with values in `[0, 1]`, normalized at preprocessing time using MONAI `ScaleIntensityRangePercentiles` (0th–99.5th percentile clipping).
-
 ---
 
-## Training on PDCAD
+## Training
 
-> ⚠️ **Before training**, update the dataset paths in `configs/train_pdcad.yaml` to point to your local data:
+### Configuration
 
-**1. Edit `configs/train_pdcad.yaml`** to point to your data:
+All hyperparameters — including optimizer, loss, scheduler, and WandB settings — live in the model config YAML. The top-level `configs/train.yaml` just specifies which data and model configs to use via its defaults list.
 
+Data paths are set in `configs/data/pdcad.yaml`:
 ```yaml
-data:
+module:
   data_root:   "/path/to/your/pdcad/data"
   labels_path: "/path/to/your/labels.json"
   splits_path: "/path/to/your/splits.json"
 ```
 
-**2. (Optional) Set which GPU to use:**
+### Running training
 
 ```bash
+# (Optional) set which GPU to use
 export CUDA_VISIBLE_DEVICES=0
-```
 
-**3. Run training with ViT-B (recommended starting point):**
+# DINOv2 ViT-B/14 on PDCAD (recommended starting point)
+python train.py data=pdcad model=anymc3d_vitb
 
-```bash
-python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad
-```
+# V-JEPA 2.1 ViT-B on PDCAD (TODO: not yet ready — refactor in progress)
+# python train.py data=pdcad model=vjepa21_vitb
 
-Or with ViT-L for best performance (requires more VRAM):
-
-```bash
-python train.py --config-name train_pdcad model=anymc3d_vitl
+# Background with logging
+nohup python train.py data=pdcad model=anymc3d_vitb > logs/anymc3d_vitb_pdcad.log 2>&1 &
 ```
 
 Any config value can be overridden on the command line:
 
 ```bash
 # Different fold
-python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad data.fold=1
+python train.py data=pdcad model=anymc3d_vitb data.module.fold=1
 
 # Larger batch size
-python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad data.batch_size=4
+python train.py data=pdcad model=anymc3d_vitb data.module.batch_size=4
 
-# Custom run name
-python train.py --config-name train_pdcad model=anymc3d_vitb_pdcad model.run_name=my_run
+# Multi-fold
+python train.py data=pdcad model=anymc3d_vitb 'data.module.fold=[0,1,2]'
+
+# Override a model hyperparameter
+python train.py data=pdcad model=anymc3d_vitb model.lora_lr=2e-4
 ```
 
-Training logs to [Weights & Biases](https://wandb.ai) under the project `pdcad-anymc3d`. All outputs are saved under the `outputs/` directory:
-
-- **Checkpoints** → `outputs/checkpoints/<run_name>/`
-- **Loss curves and training logs** → `outputs/logs/`
+Training logs to [Weights & Biases](https://wandb.ai) under the project specified in the model config (`pdcad-anymc3d` by default). Checkpoints are saved under `checkpoints/<run_name>/`.
 
 ---
 
 ## Inference
 
-Point the inference script at a completed run directory. It auto-discovers the config and best checkpoint (by val AUROC):
-
-```bash
-python inference.py --run_dir outputs/checkpoints/PDCAD_anymc3d-vitb14-t1c_CosineLR_LoRAlr_1e-6_headlr_5e-6_200ep
-```
-
-By default this evaluates the **test** split. To evaluate a different split:
-
-```bash
-python inference.py --run_dir outputs/checkpoints/<run_name> --split val
-```
-
-To use a specific checkpoint instead of the best:
-
-```bash
-python inference.py --run_dir outputs/checkpoints/<run_name> --checkpoint epoch=45-val_auroc=0.8123.ckpt
-```
-
-To override the data path (e.g. running on a different machine):
-
-```bash
-python inference.py --run_dir outputs/checkpoints/<run_name> --data_root /new/path/to/data
-```
-
-**Outputs** are saved inside `outputs/predictions/<run_name>/`:
-
-| File | Description |
-|------|-------------|
-| `predictions_test.csv` | Per-case predictions, class probabilities, and confidence |
-| `summary_test.csv` | Overall and per-class metrics (AUROC, F1, balanced accuracy) |
-| `confusion_matrix_test.png` | Confusion matrix plot |
-| `roc_curves_test.png` | Per-class ROC curves |
+> ⚠️ `inference.py` is pending updates for the refactored codebase.
 
 ---
 
 ## Key hyperparameters
 
-| Parameter | Default (PDCAD) | Description |
-|-----------|----------------|-------------|
+| Parameter | Default (PDCAD ViT-B) | Description |
+|-----------|----------------------|-------------|
 | `backbone_name` | `dinov2_vitb14` | DINOv2 variant (`vits14`, `vitb14`, `vitl14`) |
 | `lora_rank` | 8 | LoRA rank |
 | `lora_alpha` | 16 | LoRA scaling |
 | `input_size` | 308 | Slice resize resolution fed to DINOv2 (must be a multiple of 14) |
 | `slice_axis` | 3 | Axis to extract 2D slices along (axis 3 = 70 slices for PDCAD) |
-| `dropout` | 0.1 | Dropout rate |
+| `vision_blocks` | 0 | Number of learnable transformer blocks on top of backbone (0 = disabled) |
 | `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
-| `head_lr` | 1e-3 | Learning rate for classifier head |
-| `lr_scheduler` | `cosine` | Learning rate schedule (`cosine` or `constant`) |
+| `head_lr` | 5e-4 | Learning rate for classifier head |
+| `lr_scheduler` | `cosine` | LR schedule (`cosine` or `constant`) |
 | `focal_gamma` | 2.0 | Focal loss focusing parameter |
-| `focal_alpha` | 0.25 | Focal loss class balancing parameter |
+| `focal_alpha` | 0.5 | Focal loss class balancing (0.5 for balanced datasets) |
 | `max_epochs` | 150 | Maximum training epochs |
 | `precision` | `16-mixed` | Mixed precision training |
-| `batch_size` | 2 | Training batch size |
-| `patch_size` | `[308, 308, 70]` | Volume dimensions after preprocessing (H × W × S, no spatial resizing applied) |
+| `batch_size` | 2 | Training batch size (set in data config) |
+| `patch_size` | `[300, 300, 70]` | Input volume dimensions (set in data config) |
 
 ---
 
