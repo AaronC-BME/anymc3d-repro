@@ -21,6 +21,19 @@ USAGE — with ground-truth labels (metrics + confusion matrix + ROC curves)
       --labels_csv /data/PDCAD/labels.csv          # columns: case_id, label
 
 ────────────────────────────────────────────────────────────────────────────────
+USAGE — V-JEPA 2.1 checkpoint (on a machine where the original .pt path differs)
+────────────────────────────────────────────────────────────────────────────────
+  python inference_nifti.py \\
+      --run_dir   checkpoints/vjepa21-vitb-pdcad \\
+      --nifti_dir /data/PDCAD/raw_nifti \\
+      --labels_csv /data/PDCAD/labels.csv
+
+  The --vjepa_base_weights flag is NOT needed for inference: the Lightning
+  checkpoint already contains the full model state (base encoder + LoRA +
+  head). It is only needed if you want to re-run __init__ with base weights
+  for debugging purposes.
+
+────────────────────────────────────────────────────────────────────────────────
 NIfTI LAYOUT (either flat or one-level subdirectories)
 ────────────────────────────────────────────────────────────────────────────────
   Flat:
@@ -39,6 +52,7 @@ PREPROCESSING (applied inline, matching the offline pipeline)
 ────────────────────────────────────────────────────────────────────────────────
   pdcad      : MONAI ScaleIntensityRangePercentiles (p0 → p99.5) → [0, 1]
                No spatial resampling — native 300×300×70 passed to model.
+  meningioma : Z-score normalisation within brain mask → trilinear resample to 256³
 
 ────────────────────────────────────────────────────────────────────────────────
 OUTPUTS  (saved inside run_dir)
@@ -48,6 +62,13 @@ OUTPUTS  (saved inside run_dir)
   confusion_matrix_nifti.png     — confusion matrix               (labels only)
   roc_curves_nifti.png           — per-class ROC curves           (labels only)
 
+
+Last run:
+    python inference_nifti.py \
+      --run_dir   checkpoints/anymc3d_2VisBlck_LoRALR_1e-4_Headlr_1e-3_vitb_pdcad_PS_308_308_70_150ep_fold0\
+      --nifti_dir /home/jma/Documents/projects/safwat/Datasets/Dataset031_PDCAD_NM/imagesVal \
+      --labels_csv /home/jma/Documents/projects/safwat/Datasets/Dataset031_PDCAD_NM/val_cases.csv \
+      --checkpoint "epoch=87-val_auroc=0.9132.ckpt" 
 """
 
 from __future__ import annotations
@@ -113,6 +134,9 @@ def find_config(run_dir: Path) -> Path:
 
 def find_best_checkpoint(run_dir: Path) -> Path:
     ckpts = sorted(run_dir.glob("*.ckpt"))
+    if not ckpts:
+        # Also check one level deep (Lightning saves to epoch=N-step=M.ckpt subdirs)
+        ckpts = sorted(run_dir.rglob("*.ckpt"))
     if not ckpts:
         raise FileNotFoundError(f"No .ckpt files found in {run_dir}")
 
@@ -204,7 +228,7 @@ def preprocess_pdcad(vol: np.ndarray) -> np.ndarray:
       ScaleIntensityRangePercentiles(lower=0, upper=99.5, b_min=0, b_max=1, clip=True)
 
     No spatial resampling: the model's internal _prepare_clip handles in-plane
-    resize from 300 → crop_size (384 for V-JEPA 2.1, 308 for DINOv2 ViT-B/14).
+    resize (300 → crop_size: 384 for V-JEPA 2.1, 308 for DINOv2 ViT-B/14).
     """
     p_low  = np.percentile(vol, 0)
     p_high = np.percentile(vol, 99.5)
@@ -260,7 +284,7 @@ class NiftiInferenceDataset(Dataset):
     appropriate preprocessing for the target model.
 
     Returns:
-        volume  : torch.Tensor  shape (1, H, W, S) — single-channel, batch dim excluded
+        volume  : torch.Tensor  shape (1, H, W, S) — single-channel, no batch dim
         label   : int   (-1 if unknown)
         case_id : str
     """
@@ -298,30 +322,47 @@ class NiftiInferenceDataset(Dataset):
 #  Model loading
 # ============================================================================
 
+def _resolve_class_from_target(target: str):
+    """
+    Resolve a dotted _target_ string to a Python class.
+    e.g. 'model_arch.anymc3d.AnyMC3DLightningModule'
+         → importlib.import_module('model_arch.anymc3d').AnyMC3DLightningModule
+    """
+    import importlib
+    module_path, class_name = target.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
 def load_model(ckpt_path: Path, cfg):
-    arch = cfg.model.arch
-    if arch == "anymc3d":
-        from anymc3d import AnyMC3DLightningModule
-        model = AnyMC3DLightningModule.load_from_checkpoint(
-            str(ckpt_path), map_location='cpu')
-    elif arch == "vjepa2_anymc3d":
-        from vjepa2_anymc3d import VJEPA2LightningModule
-        model = VJEPA2LightningModule.load_from_checkpoint(
-            str(ckpt_path), map_location='cpu')
-    elif arch == "anymc3d_v2":
-        from anymc3d_v2 import AnyMC3DLightningModule
-        model = AnyMC3DLightningModule.load_from_checkpoint(
-            str(ckpt_path), map_location='cpu')
-    elif arch == "anymc3d_backbone":
-        from anymc3d_backbone import AnyMC3DLightningModule
-        model = AnyMC3DLightningModule.load_from_checkpoint(
-            str(ckpt_path), map_location='cpu')
-    elif arch == "rsna_cnn":
-        from rsna_kaggle_model import RSNAKaggleLightningModule
-        model = RSNAKaggleLightningModule.load_from_checkpoint(
-            str(ckpt_path), map_location='cpu')
+    """
+    Load a Lightning checkpoint using cfg.model._target_ to resolve the class.
+
+    This works directly with the config.yaml that Hydra saves during training —
+    no separate 'arch' key is needed.
+
+    For V-JEPA models: vjepa_checkpoint_path is overridden to None so __init__
+    skips pretrained base-weight loading.  Lightning restores the full model
+    state from the .ckpt file regardless.
+    """
+    target = cfg.model._target_
+    log.info(f"Resolving model class from _target_: {target}")
+    LightningClass = _resolve_class_from_target(target)
+
+    is_vjepa = "vjepa2" in target.lower()
+
+    if is_vjepa:
+        model = LightningClass.load_from_checkpoint(
+            str(ckpt_path),
+            map_location="cpu",
+            vjepa_checkpoint_path=None,   # skip redundant base-weight loading
+        )
     else:
-        raise ValueError(f"Unknown arch: {arch!r}")
+        model = LightningClass.load_from_checkpoint(
+            str(ckpt_path),
+            map_location="cpu",
+        )
+
     model.eval()
     return model
 
@@ -335,10 +376,13 @@ def run_inference(
     model,
     dataloader: DataLoader,
     device:     torch.device,
-    arch:       str,
 ) -> tuple[list[str], np.ndarray, np.ndarray]:
     model.to(device)
     model.eval()
+
+    # Duck-type: anymc3d variants expose model.modalities and expect a dict;
+    # vjepa2_anymc3d and others take a plain tensor.
+    uses_modality_dict = hasattr(model, "modalities") and model.modalities
 
     all_case_ids: list[str]        = []
     all_labels:   list[int]        = []
@@ -347,10 +391,9 @@ def run_inference(
     for volumes, labels, case_ids in dataloader:
         volumes = volumes.to(device)
 
-        if arch in ("anymc3d", "anymc3d_v2", "anymc3d_backbone"):
-            logits, _ = model.model({model.modalities[0]: volumes})
-        elif arch == "vjepa2_anymc3d":
-            logits = model.model(volumes)
+        if uses_modality_dict:
+            modality_key = model.modalities[0]
+            logits, _ = model.model({modality_key: volumes})
         else:
             logits = model.model(volumes)
 
@@ -552,13 +595,12 @@ def main() -> None:
     cfg = OmegaConf.load(config_path)
 
     # ── Dataset type ─────────────────────────────────────────────────────────
-    # CLI flag overrides config; config overrides default ('meningioma')
     dataset_type: str = (
         args.dataset
         or cfg.data.get('dataset', 'meningioma')
     )
     log.info(f"Dataset type  : {dataset_type}")
-    log.info(f"Arch          : {cfg.model.arch}")
+    log.info(f"Model target  : {cfg.model._target_}")
 
     # ── Class names ──────────────────────────────────────────────────────────
     global CLASS_NAMES
@@ -577,8 +619,6 @@ def main() -> None:
                 f"labels_csv must have columns [case_id, label]; "
                 f"found: {list(labels_df.columns)}"
             )
-        # Normalise CSV case_ids the same way as filenames so both sides
-        # always use 'RJPD_XXX' regardless of whether _0000 is present
         labels_df['case_id'] = labels_df['case_id'].astype(str).apply(_strip_channel_suffix)
         label_map  = dict(zip(labels_df['case_id'], labels_df['label'].astype(int)))
         has_labels = True
@@ -589,9 +629,9 @@ def main() -> None:
     # ── NIfTI discovery ──────────────────────────────────────────────────────
     cases = find_nifti_files(nifti_dir)
 
-    # --- TEMPORARY DIAGNOSTIC ---
-    log.info(f"Sample file case_ids  : {[c for c,_ in cases[:3]]}")
-    log.info(f"Sample label_map keys : {list(label_map.keys())[:3]}")
+    log.info(f"Sample file case_ids  : {[c for c, _ in cases[:3]]}")
+    if label_map:
+        log.info(f"Sample label_map keys : {list(label_map.keys())[:3]}")
 
     # ── Dataset + DataLoader ─────────────────────────────────────────────────
     dataset = NiftiInferenceDataset(
@@ -613,7 +653,7 @@ def main() -> None:
 
     # ── Inference ────────────────────────────────────────────────────────────
     log.info(f"Running inference on {len(dataset)} case(s) ...")
-    case_ids, y_raw, probs = run_inference(model, dataloader, device, cfg.model.arch)
+    case_ids, y_raw, probs = run_inference(model, dataloader, device)
 
     y_pred      = probs.argmax(axis=1)
     num_classes = probs.shape[1]
@@ -645,14 +685,17 @@ def main() -> None:
 
     # ── Metrics + plots (only when labels are available) ─────────────────────
     if has_labels:
-        # Filter to only cases where we have a ground-truth label
         mask        = y_raw >= 0
         y_true_eval = y_raw[mask]
         y_pred_eval = y_pred[mask]
         probs_eval  = probs[mask]
 
         if len(y_true_eval) == 0:
-            log.warning("labels_csv provided but none of the case_ids matched — skipping metrics")
+            log.warning(
+                "labels_csv provided but none of the case_ids matched — "
+                "check that the CSV case_id column matches the NIfTI filenames. "
+                "Skipping metrics."
+            )
             return
 
         accuracy     = accuracy_score(y_true_eval, y_pred_eval)
@@ -663,7 +706,6 @@ def main() -> None:
         class_stats = compute_per_class_stats(
             y_true_eval, y_pred_eval, per_class_auroc, num_classes)
 
-        # Print summary
         print(f"\n{'='*54}")
         print(f"  RESULTS  ({len(y_true_eval)} cases with labels)")
         print(f"{'='*54}")
@@ -677,7 +719,6 @@ def main() -> None:
             print(f"    {name}: {v:.4f}" if not np.isnan(v) else f"    {name}: N/A")
         print(f"{'='*54}\n")
 
-        # summary_nifti.csv
         summary_rows = [
             {'metric': 'checkpoint',        'value': ckpt_path.name},
             {'metric': 'dataset_type',      'value': dataset_type},
@@ -704,7 +745,6 @@ def main() -> None:
         summary_df.to_csv(summary_csv, index=False)
         log.info(f"Saved summary           → {summary_csv}")
 
-        # Plots
         plot_confusion_matrix(
             y_true_eval, y_pred_eval,
             run_dir / "confusion_matrix_nifti.png",
