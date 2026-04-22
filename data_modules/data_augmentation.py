@@ -113,7 +113,21 @@ def build_train_transforms() -> Compose:
             keys            = IMAGE_KEY,
             prob            = 0.2,
             rotate_range    = (0.5236, 0.5236, 0.5236),   # ±30°
+            mode            = "bilinear",
+            padding_mode    = "border",
+        ),
+
+        RandAffined(
+            keys            = IMAGE_KEY,
+            prob            = 0.2,
             scale_range     = (-0.3, 0.4),                # 0.7–1.4×
+            mode            = "bilinear",
+            padding_mode    = "border",
+        ),
+
+        RandAffined(
+            keys            = IMAGE_KEY,
+            prob            = 0.2,
             translate_range = (10, 10, 10),               # ±10 voxels
             mode            = "bilinear",
             padding_mode    = "border",
