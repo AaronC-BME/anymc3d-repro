@@ -1,39 +1,69 @@
 # @package _global_
+# Selecting this model: `python train.py model=vjepa21_vitb_pdcad`
 
 model:
-  arch: vjepa2_anymc3d
-  run_name: vjepa21-vitb-pdcad-num_frames64_loraLR_5e-6_wd_1e-5_headLR_5e-5_wd_1e-4_DA_real
-  hub_name: "vjepa2_1_vit_base_384"
-  lora_rank:  8
-  lora_alpha: 16
+  _target_: model_arch.vjepa2_anymc3d.VJEPA2LightningModule
+
+  # ── Backbone ─────────────────────────────────────────────────────────────
+  # crop_size is inferred from hub_name (384 for all V-JEPA 2.1 entry points),
+  # so there's no `input_size` to set.
+  hub_name:              "vjepa2_1_vit_base_384"
+  vjepa_checkpoint_path: /home/jma/Documents/projects/aaron/AnyMC3D/vjepa_2_1_checkpoint/vjepa2_1_vitb_dist_vitG_384.pt
+  lora_rank:             8
+  lora_alpha:            16
+
+  # ── Clip parameters ──────────────────────────────────────────────────────
+  # num_frames MUST be even (tubelet_size=2). PDCAD has S=70 slices.
+  # Token counts for ViT-B 2.1 (crop=384):
+  #   T=32  →  (32/2) × (384/16)² =  9,216 tokens  — safe at batch=2
+  #   T=64  →  (64/2) × (384/16)² = 18,432 tokens  — in-distribution for 3D-RoPE
+  #   T=70  →  (70/2) × (384/16)² = 20,160 tokens  — slight RoPE extrapolation
   num_frames: 64
   slice_axis: 3
-  num_classes: 2
-  dropout:     0.1
 
+  # ── Head ─────────────────────────────────────────────────────────────────
+  num_classes: 2
+  dropout:     0.0
+
+  # ── AnyMC3D-parity flags ─────────────────────────────────────────────────
+  # All False = flat mean-pool over all N_tokens (original V-JEPA behaviour).
+  # Turn these on to match the DINOv2 AnyMC3D ablations.
+  use_slice_attn_pool: true
+  use_patch_attn_pool: false
+  use_patch_concat:    false
+  use_25d:             false
+
+  # ── Optimizer ────────────────────────────────────────────────────────────
+  # Note: no vision_lr / vision_weight_decay — V-JEPA has no separate learnable
+  # vision blocks; only LoRA on the frozen encoder + the head.
+  lora_lr:           1.0e-05
+  lora_weight_decay: 1.0e-06
+  head_lr:           1.0e-04
+  head_weight_decay: 1.0e-05
+  warmup_epochs:     0
+  lr_scheduler:      cosine
+
+  # ── Loss ─────────────────────────────────────────────────────────────────
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+
+  # ── Training ───────────────────────────────────────────
+  max_epochs: 150
+  seed: 0
+  precision: "16-mixed"
+  early_stopping_patience: 150
+  save_top_k: 3
+  log_every_n_steps: 10
+
+  # ── WandB ────────────────────────────────────────────────────────────────
+  project: "pdcad-anymc3d"
+  run_name: vjepa21-vitb-pdcad-num_frames64_loraLR_1e-5_headLR_1e-4_DA
+
+# ─── Data overrides (only what differs from configs/data/pdcad.yaml) ───────
+# data.module.patch_size is set per-model because V-JEPA's crop is 384,
+# but we keep the volume at native 300×300×70 — the model's internal
+# _prepare_clip handles the 300→384 resize.
 data:
   augment: true
-  dataset: pdcad
-  patch_size: [300, 300, 70]
-
-optimizer:
-  lora_lr: 5.0e-06
-  lora_weight_decay: 1.0e-05
-  head_lr: 5.0e-05
-  head_weight_decay: 1.0e-04
-  warmup_epochs: 0
-  lr_scheduler: "cosine"     
-
-# ── Clip parameters ───────────────────────────────────────────────────────
-# num_frames MUST be even (tubelet_size=2).
-# PDCAD has S=70 slices along axis 3.
-#
-# Token counts for ViT-B 2.1 (crop=384):
-#   T=32  →  (32/2) × (384/16)² =  9,216 tokens  — safe at batch=1
-#   T=70  →  (70/2) × (384/16)² = 20,160 tokens  — needs grad checkpointing
-num_frames: 64
-slice_axis: 3
-
-# ── Head ──────────────────────────────────────────────────────────────────
-num_classes: 2
-dropout:     0.1
+  module:
+    patch_size: [384, 384, 70]
