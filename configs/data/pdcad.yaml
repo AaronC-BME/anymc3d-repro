@@ -18,4 +18,7 @@ module:
   fold:        0                # overridden at instantiation for multi-fold runs
   batch_size:  2
   num_workers: 8
-  patch_size:  [300, 300, 70]
+  patch_size:  [308, 308, 70] # Original PDCAD image size is 300x300x70, 
+                              # however for since DINOv2 ViT-B/14 has a patch size of 14
+  preprocess_strategy: percentile
+  class_names: [0, 1]   # or whatever your label mapping is
