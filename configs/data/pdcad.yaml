@@ -11,7 +11,7 @@ augment: true                   # flag read by attach_augmentation()
 # ── The DataModule itself — instantiated by hydra.utils.instantiate ──────
 # Only _target_ + actual PDCADDataModule.__init__ kwargs belong in here.
 module:
-  _target_:    data_modules.pdcad_dataset.PDCADDataModule
+  _target_:    data_modules.cls_data_module.ClassificationDataModule
   data_root:   /home/jma/Documents/projects/aaron/AnyMC3D/preprocessed_data/PDCAD
   labels_path: /home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/labels.json
   splits_path: /home/jma/Documents/projects/aaron/nnssl_dataset/nnssl_preprocessed/Dataset009_PDCAD_NM/splits.json
