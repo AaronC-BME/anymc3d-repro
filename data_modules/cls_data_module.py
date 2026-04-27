@@ -110,28 +110,77 @@ def _load_labels_csv(
             labels[ident] = int(row[label_col])
     return labels
 
+def _load_labels_csv_multilabel(
+    labels_path: Path,
+    id_col:      str       = "VolumeName",
+    label_cols:  List[str] = None,
+    strip_ext:   bool      = True,
+) -> dict:
+    """
+    Load a CSV multi-label file. Returns {case_id: [int, int, ...]} where
+    each list has len(label_cols) entries.
+
+    Args:
+        id_col:     Column with case identifier (e.g. 'VolumeName').
+        label_cols: List of column names — order is preserved and defines
+                    the order of labels in the model output.
+        strip_ext:  If True, strip '.nii.gz' / '.nii' from id values so
+                    they match the .npy filename stems.
+    """
+    if label_cols is None:
+        raise ValueError("label_cols must be provided for multi-label CSV")
+
+    labels: dict = {}
+    with open(labels_path, newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError(f"{labels_path}: CSV has no header row")
+
+        missing = [c for c in [id_col] + label_cols if c not in reader.fieldnames]
+        if missing:
+            raise ValueError(
+                f"{labels_path}: missing columns {missing}; "
+                f"available: {reader.fieldnames}"
+            )
+
+        for row in reader:
+            ident = (row[id_col] or "").strip()
+            if not ident:
+                continue
+            if strip_ext:
+                for ext in (".nii.gz", ".nii"):
+                    if ident.endswith(ext):
+                        ident = ident[:-len(ext)]
+                        break
+            labels[ident] = [int(row[c]) for c in label_cols]
+    return labels
+
 
 def _load_labels(
     labels_path: Union[str, Path],
-    id_col:      str = "identifier",
-    label_col:   str = "label",
+    task:        str       = "multiclass",   # NEW
+    id_col:      str       = "identifier",
+    label_col:   str       = "label",
+    label_cols:  List[str] = None,           # NEW (multilabel only)
 ) -> dict:
-    """
-    Dispatch by file extension.  Currently supports .json and .csv.
-    """
     p = Path(labels_path)
     if not p.exists():
         raise FileNotFoundError(f"Label file not found: {p}")
 
     suffix = p.suffix.lower()
+    if task == "multilabel":
+        if suffix != ".csv":
+            raise ValueError("Multi-label labels currently require a .csv file.")
+        return _load_labels_csv_multilabel(
+            p, id_col=id_col, label_cols=label_cols
+        )
+
+    # multiclass (existing behaviour)
     if suffix == ".json":
         return _load_labels_json(p)
     if suffix == ".csv":
         return _load_labels_csv(p, id_col=id_col, label_col=label_col)
-    raise ValueError(
-        f"Unsupported label file extension '{suffix}' for {p}. "
-        f"Expected .json or .csv."
-    )
+    raise ValueError(f"Unsupported label file extension '{suffix}' for {p}.")
 
 
 # ---------------------------------------------------------------
@@ -222,6 +271,8 @@ class ClassificationDataset(Dataset):
         label_col:      CSV column holding int labels (default 'label').
         file_suffix:    Filename suffix between case_id and .npy
                         (default '_0000' for nnU-Net-style channel suffix).
+        task:           'multiclass' or 'multilabel' (default 'multiclass').
+        label_cols:     For 'multilabel' task, list of CSV columns to read
     """
 
     def __init__(
@@ -236,15 +287,19 @@ class ClassificationDataset(Dataset):
         id_col:       str  = "identifier",
         label_col:    str  = "label",
         file_suffix:  str  = "_0000",
+        task:         str  = "multiclass",
+        label_cols:   list = None,
     ):
         self.data_root   = Path(data_root)
         self.split       = split
         self.patch_size  = patch_size or [308, 308, 70]
         self.class_names = class_names
         self.file_suffix = file_suffix
+        self.task        = task
+        self.label_cols  = label_cols
 
         # ── Labels (auto-dispatched by file extension) ───────────────────────
-        self.labels = _load_labels(labels_path, id_col=id_col, label_col=label_col)
+        self.labels = _load_labels(labels_path, task=task, id_col=id_col, label_col=label_col, label_cols=label_cols)
 
         # ── Splits (auto-dispatched by JSON structure) ───────────────────────
         fold_splits = _load_fold_splits(splits_path, fold)
@@ -279,9 +334,20 @@ class ClassificationDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _print_class_distribution(self):
+        if self.task == "multilabel":
+            n = len(self.case_ids)
+            # Sum across cases per label
+            counts = np.sum(
+                [self.labels[c] for c in self.case_ids], axis=0
+            ).astype(int)
+            names = self.label_cols or [f"label_{i}" for i in range(len(counts))]
+            print(f"  Multi-label positive rates ({n} cases):")
+            for name, cnt in zip(names, counts):
+                print(f"    {name:40s}  {cnt:5d}  ({100*cnt/n:.1f}%)")
+            return
+
         counts = Counter(self.labels[c] for c in self.case_ids)
         if self.class_names:
-            # class_names is a list indexed by class id; accept mixed types
             dist = {
                 str(self.class_names[k]) if k < len(self.class_names) else f"Class{k}":
                     counts.get(k, 0)
@@ -330,7 +396,13 @@ class ClassificationDataset(Dataset):
     def __getitem__(self, idx: int):
         case_id = self.case_ids[idx]
         volume  = self._load_volume(case_id)
-        label   = torch.tensor(self.labels[case_id], dtype=torch.long)
+
+        if self.task == "multilabel":
+            # self.labels[case_id] is a list of 0/1 ints; convert to float tensor
+            label = torch.tensor(self.labels[case_id], dtype=torch.float32)
+        else:
+            label = torch.tensor(self.labels[case_id], dtype=torch.long)
+
         return volume, label, case_id
 
 
@@ -383,6 +455,8 @@ class ClassificationDataModule:
         label_col:           str             = "label",
         # ── Filename convention ──────────────────────────────────────────────
         file_suffix:         str             = "_0000",
+        task:                str             = "multiclass",
+        label_cols:          Optional[list]  = None,
     ):
         self.data_root           = data_root
         self.labels_path         = labels_path
@@ -396,6 +470,8 @@ class ClassificationDataModule:
         self.id_col              = id_col
         self.label_col           = label_col
         self.file_suffix         = file_suffix
+        self.task                = task
+        self.label_cols          = label_cols
 
         # Transform hooks — set by apply_augmentation() in train.py.
         self.train_transform = None
@@ -428,6 +504,8 @@ class ClassificationDataModule:
             id_col      = self.id_col,
             label_col   = self.label_col,
             file_suffix = self.file_suffix,
+            task        = self.task,
+            label_cols  = self.label_cols,
         )
 
     # ------------------------------------------------------------------

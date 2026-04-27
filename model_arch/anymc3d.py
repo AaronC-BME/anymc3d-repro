@@ -612,11 +612,12 @@ class AnyMC3DLightningModule(L.LightningModule):
         self,
         num_classes:          int   = 4,
         modalities:           list  = ['t1c'],
+        task:                 str   = "multiclass",  
         backbone_name:        str   = 'dinov2_vitl14',
         lora_rank:            int   = 8,
         lora_alpha:           int   = 16,
         input_size:           int   = 224,
-        cls_head_dropout:              float = 0.1,
+        cls_head_dropout:     float = 0.1,
         slice_axis:           int   = 3,
         vision_blocks:        int   = 2,
         mlp_ratio:            float = 4.0,
@@ -652,6 +653,9 @@ class AnyMC3DLightningModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
+        assert task in ('multiclass', 'multilabel'), f"Unknown task: {task}"
+        self.task = task
+
         self.model = AnyMC3D(
             num_classes          = num_classes,
             modalities           = modalities,
@@ -673,20 +677,26 @@ class AnyMC3DLightningModule(L.LightningModule):
         self.num_classes = num_classes
         self.modalities  = modalities
 
-        if num_classes == 2:
+        if task == 'multilabel':
+            metric_kwargs = dict(task='multilabel', num_labels=num_classes)
+        elif num_classes == 2:
             metric_kwargs = dict(task='binary')
         else:
             metric_kwargs = dict(task='multiclass', num_classes=num_classes)
 
-        self.val_auroc    = AUROC(**metric_kwargs)
-        self.val_acc      = Accuracy(**metric_kwargs)
+        self.val_auroc    = AUROC(average='macro', **metric_kwargs) if task == 'multilabel' else AUROC(**metric_kwargs)
+        self.val_acc      = Accuracy(average='macro', **metric_kwargs) if task == 'multilabel' else Accuracy(**metric_kwargs)
         self.val_f1       = F1Score(average='macro', **metric_kwargs)
-        self.val_bal_acc  = BalancedAccuracy(num_classes=num_classes)
 
-        self.test_auroc   = AUROC(**metric_kwargs)
-        self.test_acc     = Accuracy(**metric_kwargs)
+        # BalancedAccuracy is a multiclass concept — skip it for multilabel
+        if task != 'multilabel':
+            self.val_bal_acc = BalancedAccuracy(num_classes=num_classes)
+
+        self.test_auroc   = AUROC(average='macro', **metric_kwargs) if task == 'multilabel' else AUROC(**metric_kwargs)
+        self.test_acc     = Accuracy(average='macro', **metric_kwargs) if task == 'multilabel' else Accuracy(**metric_kwargs)
         self.test_f1      = F1Score(average='macro', **metric_kwargs)
-        self.test_bal_acc = BalancedAccuracy(num_classes=num_classes)
+        if task != 'multilabel':
+            self.test_bal_acc = BalancedAccuracy(num_classes=num_classes)
 
         self.test_preds  = []
         self.test_labels = []
@@ -696,10 +706,23 @@ class AnyMC3DLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     def focal_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """FL(p_t) = -alpha * (1 - p_t)^gamma * log(p_t)"""
-        ce = F.cross_entropy(logits, targets, reduction='none')
-        pt = torch.exp(-ce)
-        return (self.hparams.focal_alpha * (1 - pt) ** self.hparams.focal_gamma * ce).mean()
+        """
+        Focal loss with two modes:
+        - multiclass: softmax-based, targets are class indices [B]
+        - multilabel: sigmoid-based, targets are multi-hot floats [B, K]
+        FL(p_t) = -alpha * (1 - p_t)^gamma * log(p_t)
+        """
+        if self.task == 'multilabel':
+            # targets must be float for BCE
+            targets = targets.float()
+            bce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+            pt = torch.exp(-bce)  # prob of correct class per element
+            focal = self.hparams.focal_alpha * (1 - pt) ** self.hparams.focal_gamma * bce
+            return focal.mean()
+        else:
+            ce = F.cross_entropy(logits, targets, reduction='none')
+            pt = torch.exp(-ce)
+            return (self.hparams.focal_alpha * (1 - pt) ** self.hparams.focal_gamma * ce).mean()
 
     # ------------------------------------------------------------------
     # Batch unpacking
@@ -715,7 +738,10 @@ class AnyMC3DLightningModule(L.LightningModule):
         inputs, y = self._unpack_batch(batch)
         logits, _ = self.model(inputs)
         loss      = self.focal_loss(logits, y)
-        probs     = F.softmax(logits, dim=1)
+        if self.task == 'multilabel':
+            probs = torch.sigmoid(logits)
+        else:
+            probs = F.softmax(logits, dim=1)
         return loss, probs, y
 
     # ------------------------------------------------------------------
@@ -730,54 +756,76 @@ class AnyMC3DLightningModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss, probs, y = self._shared_step(batch)
-        preds = probs.argmax(dim=1)
-        auroc_input = probs[:, 1] if self.num_classes == 2 else probs
-        self.val_auroc.update(auroc_input, y)
-        self.val_acc.update(preds, y)
-        self.val_f1.update(preds, y)
-        self.val_bal_acc.update(preds, y)
+
+        if self.task == 'multilabel':
+            # torchmetrics multilabel expects int targets [B, K] and float probs [B, K]
+            y_int = y.int()
+            self.val_auroc.update(probs, y_int)
+            self.val_acc.update(probs, y_int)
+            self.val_f1.update(probs, y_int)
+        else:
+            preds = probs.argmax(dim=1)
+            auroc_input = probs[:, 1] if self.num_classes == 2 else probs
+            self.val_auroc.update(auroc_input, y)
+            self.val_acc.update(preds, y)
+            self.val_f1.update(preds, y)
+            self.val_bal_acc.update(preds, y)
+
         self.log('val/loss', loss, on_epoch=True, prog_bar=True, sync_dist=True)
 
     def on_validation_epoch_end(self):
-        self.log('val/AUROC',             self.val_auroc.compute(),   prog_bar=True, sync_dist=True)
-        self.log('val/accuracy',          self.val_acc.compute(),     prog_bar=True, sync_dist=True)
-        self.log('val/F1_macro',          self.val_f1.compute(),      prog_bar=True, sync_dist=True)
-        self.log('val/balanced_accuracy', self.val_bal_acc.compute(), prog_bar=True, sync_dist=True)
-        self.val_auroc.reset(); self.val_acc.reset()
-        self.val_f1.reset();    self.val_bal_acc.reset()
+        self.log('val/AUROC',    self.val_auroc.compute(), prog_bar=True, sync_dist=True)
+        self.log('val/accuracy', self.val_acc.compute(),   prog_bar=True, sync_dist=True)
+        self.log('val/F1_macro', self.val_f1.compute(),    prog_bar=True, sync_dist=True)
+        self.val_auroc.reset(); self.val_acc.reset(); self.val_f1.reset()
+
+        if self.task != 'multilabel':
+            self.log('val/balanced_accuracy', self.val_bal_acc.compute(),
+                    prog_bar=True, sync_dist=True)
+            self.val_bal_acc.reset()
 
     def test_step(self, batch, batch_idx):
         loss, probs, y = self._shared_step(batch)
-        preds = probs.argmax(dim=1)
-        auroc_input = probs[:, 1] if self.num_classes == 2 else probs
-        self.test_auroc.update(auroc_input, y)
-        self.test_acc.update(preds, y)
-        self.test_f1.update(preds, y)
-        self.test_bal_acc.update(preds, y)
+
+        if self.task == 'multilabel':
+            y_int = y.int()
+            self.test_auroc.update(probs, y_int)
+            self.test_acc.update(probs, y_int)
+            self.test_f1.update(probs, y_int)
+        else:
+            preds = probs.argmax(dim=1)
+            auroc_input = probs[:, 1] if self.num_classes == 2 else probs
+            self.test_auroc.update(auroc_input, y)
+            self.test_acc.update(preds, y)
+            self.test_f1.update(preds, y)
+            self.test_bal_acc.update(preds, y)
+
         self.test_preds.append(probs.cpu())
         self.test_labels.append(y.cpu())
 
     def on_test_epoch_end(self):
-        auroc        = self.test_auroc.compute()
-        acc          = self.test_acc.compute()
-        f1           = self.test_f1.compute()
-        balanced_acc = self.test_bal_acc.compute()
+        auroc = self.test_auroc.compute()
+        acc   = self.test_acc.compute()
+        f1    = self.test_f1.compute()
 
-        self.log('test/AUROC',             auroc)
-        self.log('test/accuracy',          acc)
-        self.log('test/F1_macro',          f1)
-        self.log('test/balanced_accuracy', balanced_acc)
+        self.log('test/AUROC',    auroc)
+        self.log('test/accuracy', acc)
+        self.log('test/F1_macro', f1)
 
         print(f"\n{'='*50}")
         print(f"Test Results:")
-        print(f"  AUROC:             {auroc:.4f}")
-        print(f"  Accuracy:          {acc:.4f}")
-        print(f"  Balanced Accuracy: {balanced_acc:.4f}")
+        print(f"  AUROC (macro):     {auroc:.4f}")
+        print(f"  Accuracy (macro):  {acc:.4f}")
         print(f"  F1 (macro):        {f1:.4f}")
-        print(f"{'='*50}\n")
 
-        self.test_auroc.reset(); self.test_acc.reset()
-        self.test_f1.reset();    self.test_bal_acc.reset()
+        if self.task != 'multilabel':
+            balanced_acc = self.test_bal_acc.compute()
+            self.log('test/balanced_accuracy', balanced_acc)
+            print(f"  Balanced Accuracy: {balanced_acc:.4f}")
+            self.test_bal_acc.reset()
+
+        print(f"{'='*50}\n")
+        self.test_auroc.reset(); self.test_acc.reset(); self.test_f1.reset()
 
     def predict_step(self, batch, batch_idx):
         inputs, y = self._unpack_batch(batch)
