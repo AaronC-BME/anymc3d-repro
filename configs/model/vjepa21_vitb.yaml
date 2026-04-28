@@ -3,6 +3,7 @@
 
 model:
   _target_: model_arch.vjepa2_anymc3d.VJEPA2LightningModule
+  task:           multiclass  # multiclass vs. multilabel
 
   # ── Backbone ─────────────────────────────────────────────────────────────
   # crop_size is inferred from hub_name (384 for all V-JEPA 2.1 entry points),
