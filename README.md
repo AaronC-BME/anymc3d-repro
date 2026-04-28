@@ -4,22 +4,28 @@ Scalable 3D Medical Image Classifier adapted from 2D Foundation Models.
 
 Based on: *"Revisiting 2D Foundation Models for Scalable 3D Medical Image Classification"* — Liu et al., 2025 ([arXiv:2512.12887](https://arxiv.org/abs/2512.12887))
 
-This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes, 4-class molecular subtype classification on the **Meningioma T1c** dataset, and 18-class multi-abnormality classification on the **CT-RATE** chest CT dataset.
+This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes, and 18-class multi-abnormality classification on the **CT-RATE** chest CT dataset.
 
 ---
 
 ## How it works
 
-AnyMC3D wraps a frozen DINOv2 backbone with lightweight LoRA adapters. For each 3D volume:
+AnyMC3D wraps a frozen 2D / video foundation model with lightweight LoRA adapters. Two backbones are supported:
+
+**DINOv2 (default).** For each 3D volume:
 
 1. All 2D slices are extracted along the chosen axis (axial by default)
 2. Each slice is encoded with the LoRA-adapted DINOv2 (ViT-B/14 or ViT-L/14)
 3. An attention pooling module aggregates slice embeddings into a single volume embedding
 4. A linear head produces the final class prediction
 
-An alternative backbone using **V-JEPA 2.1** (Meta's spatiotemporal ViT-B) is also in development, treating the slice axis natively as a temporal dimension via 3D-RoPE.
+**V-JEPA 2.1 (alternative).** Treats the slice axis natively as a temporal dimension, taking advantage of V-JEPA 2.1's spatiotemporal pretraining and 3D-RoPE positional encoding. For each 3D volume:
 
-> ⚠️ **V-JEPA 2.1 integration is a work in progress.** `model_arch/vjepa2_anymc3d.py` and `configs/model/vjepa21_vitb.yaml` are not yet fully refactored and should not be used for training.
+1. `num_frames` slices are uniformly sampled along the chosen axis (must be even — V-JEPA's tubelet size is 2)
+2. Slices are resized to the model's native crop size (384 for ViT-B), grayscale-replicated to 3 channels, and ImageNet-normalized
+3. The frozen + LoRA-adapted V-JEPA encoder produces a `(T', H'·W', D)` token grid where `T' = num_frames / 2` time-tubes and `H'·W' = (crop / 16)²` spatial patches per tube
+4. Two-stage pooling — first spatial (within each time-tube), then temporal (across time-tubes) — yields a single volume embedding
+5. A linear head produces the final class prediction
 
 ---
 
@@ -86,17 +92,6 @@ Access requires agreeing to the dataset terms (academic/research use only). Afte
 **Task:** 18-class multi-label binary classification (one binary label per abnormality per volume). The 18 abnormalities are:
 
 > Medical material, arterial wall calcification, cardiomegaly, pericardial effusion, coronary artery wall calcification, hiatal hernia, lymphadenopathy, emphysema, atelectasis, lung nodule, lung opacity, pulmonary fibrotic sequela, pleural effusion, mosaic attenuation pattern, peribronchial thickening, consolidation, bronchiectasis, interlobular septal thickening
-
-**Dataset statistics:**
-
-| Split | Patients | Volumes |
-|-------|----------|---------|
-| Train | 20,000 | 45,149 |
-| Val | 1,304 | 2,000 |
-| Test | — | 3,039 |
-| **Total** | **21,304** | **50,188** |
-
-**Preprocessing:** CT window `[-1000, 400]` (lung window) rescaled to `[0, 1]`, then resized to `476 × 476 × 240`. Three CT windows (all-tissue, soft-tissue, lung: `[-1000, 1000]`, `[-150, 250]`, `[-1000, 400]`) are used as three input channels, following the A.S.L. multi-window scheme described in the paper.
 
 ---
 
@@ -196,14 +191,14 @@ A `preprocessing_manifest.json` is written to `--output_dir` recording every par
 **Z-score, auto median spacing, no resize** (typical for structural MRI):
 ```bash
 python preprocess.py \
-    --input_dir  /data/BMLMPS_FLAIR/imagesTr \
-    --output_dir /data/BMLMPS_FLAIR/preprocessed \
+    --input_dir  /path/to/raw/folder \
+    --output_dir /path/to/preprocessed/folder \
     --norm       zscore \
     --workers    4 \
     --verify
 ```
 
-**Percentile clip (0.5–99.5), fixed 1mm isotropic spacing, resize to 256³** (typical for PDCAD / NM-MRI):
+**Percentile clip (0.5–99.5), fixed 1mm isotropic spacing, resize to 256³** :
 ```bash
 python preprocess.py \
     --input_dir      /data/PDCAD \
@@ -235,7 +230,6 @@ python preprocess.py \
 ### Notes per dataset
 
 - **PDCAD**: use `--norm percentile --lower_pct 0 --upper_pct 99.5`. Volumes preserve their original shape `(1, 300, 300, 70)` if you skip `--target_size` and use `--target_spacing` matching the source spacing.
-- **Meningioma T1c**: use `--norm zscore` for structural MRI; consider `--target_size 256` to resample variable FOVs to a consistent 256³ grid.
 - **CT-RATE**: not handled by this script directly — chest CT requires multi-window ([-1000, 1000], [-150, 250], [-1000, 400]) preprocessing rescaled to [0, 1] per channel (see Dataset section above).
 
 ---
@@ -293,7 +287,7 @@ For multi-label datasets (e.g. CT-RATE's 18 abnormalities), set `task: multilabe
 }
 ```
 
-*List-of-folds* (BMLMPS / nnSSL style):
+*List-of-folds* :
 ```json
 [
     {"train": [...], "val": [...]},
@@ -460,7 +454,7 @@ When `target_size` is set, all preprocessed volumes share a fixed shape and are 
 | `slice_axis` | 3 | Axis to extract 2D slices along (axis 3 = 70 slices for PDCAD) |
 | `vision_blocks` | 0 | Number of learnable transformer blocks on top of backbone (0 = disabled) |
 | `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
-| `head_lr` | 1e-3 | Learning rate for classifier head |
+| `head_lr` | 5e-4 | Learning rate for classifier head |
 | `lr_scheduler` | `cosine` | LR schedule (`cosine` or `constant`) |
 | `focal_gamma` | 2.0 | Focal loss focusing parameter |
 | `focal_alpha` | 0.5 | Focal loss class balancing (0.5 for balanced datasets) |
