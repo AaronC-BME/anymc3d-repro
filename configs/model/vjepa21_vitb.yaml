@@ -36,10 +36,10 @@ model:
   # ── Optimizer ────────────────────────────────────────────────────────────
   # Note: no vision_lr / vision_weight_decay — V-JEPA has no separate learnable
   # vision blocks; only LoRA on the frozen encoder + the head.
-  lora_lr:           1.0e-05
-  lora_weight_decay: 1.0e-06
-  head_lr:           1.0e-04
-  head_weight_decay: 1.0e-05
+  lora_lr:           1.0e-04
+  lora_weight_decay: 1.0e-05
+  head_lr:           1.0e-03
+  head_weight_decay: 1.0e-04
   warmup_epochs:     0
   lr_scheduler:      cosine
 
@@ -57,13 +57,4 @@ model:
 
   # ── WandB ────────────────────────────────────────────────────────────────
   project: "pdcad-anymc3d"
-  run_name: vjepa21-vitb-pdcad-num_frames64_loraLR_1e-5_headLR_1e-4_DA
-
-# ─── Data overrides (only what differs from configs/data/pdcad.yaml) ───────
-# data.module.patch_size is set per-model because V-JEPA's crop is 384,
-# but we keep the volume at native 300×300×70 — the model's internal
-# _prepare_clip handles the 300→384 resize.
-data:
-  augment: true
-  module:
-    patch_size: [384, 384, 70]
+  run_name: vjepa21-vitb-PatchAttnPool_num_frames64_loraLR_1e-4_headLR_1e-3_DA

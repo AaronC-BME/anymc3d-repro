@@ -684,6 +684,14 @@ class AnyMC3DLightningModule(L.LightningModule):
         else:
             metric_kwargs = dict(task='multiclass', num_classes=num_classes)
 
+        # ── Training metrics (mirror val) ─────────────────────────────────────
+        self.train_auroc = AUROC(average='macro', **metric_kwargs) if task == 'multilabel' else AUROC(**metric_kwargs)
+        self.train_acc   = Accuracy(average='macro', **metric_kwargs) if task == 'multilabel' else Accuracy(**metric_kwargs)
+        self.train_f1    = F1Score(average='macro', **metric_kwargs)
+
+        if task != 'multilabel':
+            self.train_bal_acc = BalancedAccuracy(num_classes=num_classes)
+
         self.val_auroc    = AUROC(average='macro', **metric_kwargs) if task == 'multilabel' else AUROC(**metric_kwargs)
         self.val_acc      = Accuracy(average='macro', **metric_kwargs) if task == 'multilabel' else Accuracy(**metric_kwargs)
         self.val_f1       = F1Score(average='macro', **metric_kwargs)
@@ -749,10 +757,35 @@ class AnyMC3DLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     def training_step(self, batch, batch_idx):
-        loss, _, _ = self._shared_step(batch)
+        loss, probs, y = self._shared_step(batch)
+
+        if self.task == 'multilabel':
+            y_int = y.int()
+            self.train_auroc.update(probs, y_int)
+            self.train_acc.update(probs, y_int)
+            self.train_f1.update(probs, y_int)
+        else:
+            preds = probs.argmax(dim=1)
+            auroc_input = probs[:, 1] if self.num_classes == 2 else probs
+            self.train_auroc.update(auroc_input, y)
+            self.train_acc.update(preds, y)
+            self.train_f1.update(preds, y)
+            self.train_bal_acc.update(preds, y)
+
         self.log('train/loss', loss, on_step=True, on_epoch=True,
-                 prog_bar=True, sync_dist=True)
+                prog_bar=True, sync_dist=True)
         return loss
+    
+    def on_train_epoch_end(self):
+        self.log('train/AUROC',    self.train_auroc.compute(), prog_bar=False, sync_dist=True)
+        self.log('train/accuracy', self.train_acc.compute(),   prog_bar=False, sync_dist=True)
+        self.log('train/F1_macro', self.train_f1.compute(),    prog_bar=False, sync_dist=True)
+        self.train_auroc.reset(); self.train_acc.reset(); self.train_f1.reset()
+
+        if self.task != 'multilabel':
+            self.log('train/balanced_accuracy', self.train_bal_acc.compute(),
+                    prog_bar=False, sync_dist=True)
+            self.train_bal_acc.reset()
 
     def validation_step(self, batch, batch_idx):
         loss, probs, y = self._shared_step(batch)

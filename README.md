@@ -4,7 +4,7 @@ Scalable 3D Medical Image Classifier adapted from 2D Foundation Models.
 
 Based on: *"Revisiting 2D Foundation Models for Scalable 3D Medical Image Classification"* — Liu et al., 2025 ([arXiv:2512.12887](https://arxiv.org/abs/2512.12887))
 
-This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes, and 4-class molecular subtype classification on the **Meningioma T1c** dataset.
+This implementation applies AnyMC3D to binary classification on the **PDCAD** dataset using Nuclear Medicine (NM) volumes, 4-class molecular subtype classification on the **Meningioma T1c** dataset, and 18-class multi-abnormality classification on the **CT-RATE** chest CT dataset.
 
 ---
 
@@ -29,9 +29,9 @@ An alternative backbone using **V-JEPA 2.1** (Meta's spatiotemporal ViT-B) is al
 AnyMC3D/
 ├── train.py                        # Hydra-driven training script
 ├── inference_online.py             # Inference + metrics + plots (TODO: update for refactor)
-├── inference_nifti.py              # Inference directly from raw NIfTI files
+├── inference_nifti.py              # Inference on raw NIfTI (full preprocessing + metrics + plots)
 ├── balanced_accuracy.py            # Custom balanced accuracy metric
-├── preprocess.py                   # Preprocessing pipeline (MONAI percentile normalization)
+├── preprocess.py                   # Preprocessing pipeline (crop → normalize → resample)
 ├── pyproject.toml                  # Project dependencies (uv / pip)
 ├── uv.lock                         # Locked dependency versions
 │
@@ -43,7 +43,7 @@ AnyMC3D/
 ├── data_modules/
 │   ├── __init__.py
 │   ├── pdcad_dataset.py            # PDCAD Dataset and DataModule
-│   └── data_augmentation.py        # MONAI augmentation pipeline (nnU-Net style)
+│   └── data_augmentation.py        # MONAI augmentation pipeline
 │
 ├── configs/
 │   ├── train.yaml                  # Top-level training config (defaults list)
@@ -60,6 +60,8 @@ AnyMC3D/
 
 ## Dataset Download
 
+### PDCAD
+
 The PDCAD dataset (Nuclear Medicine (NM) volumes, labels, and splits) is available for download via Google Drive:
 
 > 📁 **[Download PDCAD dataset](https://drive.google.com/drive/folders/1cLZosBVq2HbyDH0BbSxf90J4M96A_4gi?usp=drive_link)**
@@ -72,6 +74,61 @@ The archive includes:
 After downloading, point `data_root`, `labels_path`, and `splits_path` in `configs/data/pdcad.yaml` to the extracted directory.
 
 > **Note on preprocessing:** The `.npy` files are pre-converted from the original `.nii.gz` images using `preprocess.py`. If you need to re-run preprocessing from raw NIfTI files (e.g. to change normalization parameters), see the [Preprocessing](#preprocessing) section below.
+
+### CT-RATE
+
+CT-RATE is a publicly available chest CT dataset from Istanbul Medipol University. It comprises **50,188 non-contrast chest CT volumes** (25,692 unique scans expanded through multiple reconstructions) from **21,304 unique patients**, paired with radiology reports and multi-abnormality labels for 18 chest findings.
+
+> 🤗 **[Request access on Hugging Face](https://huggingface.co/datasets/ibrahimhamamci/CT-RATE)**
+
+Access requires agreeing to the dataset terms (academic/research use only). After approval, volumes and metadata can be downloaded directly from the Hugging Face repository.
+
+**Task:** 18-class multi-label binary classification (one binary label per abnormality per volume). The 18 abnormalities are:
+
+> Medical material, arterial wall calcification, cardiomegaly, pericardial effusion, coronary artery wall calcification, hiatal hernia, lymphadenopathy, emphysema, atelectasis, lung nodule, lung opacity, pulmonary fibrotic sequela, pleural effusion, mosaic attenuation pattern, peribronchial thickening, consolidation, bronchiectasis, interlobular septal thickening
+
+**Dataset statistics:**
+
+| Split | Patients | Volumes |
+|-------|----------|---------|
+| Train | 20,000 | 45,149 |
+| Val | 1,304 | 2,000 |
+| Test | — | 3,039 |
+| **Total** | **21,304** | **50,188** |
+
+**Preprocessing:** CT window `[-1000, 400]` (lung window) rescaled to `[0, 1]`, then resized to `476 × 476 × 240`. Three CT windows (all-tissue, soft-tissue, lung: `[-1000, 1000]`, `[-150, 250]`, `[-1000, 400]`) are used as three input channels, following the A.S.L. multi-window scheme described in the paper.
+
+---
+
+## CT-RATE dataset format
+
+### Volume naming convention
+
+Folders are structured as `split_patientID_scanID_reconstructionID`. For example:
+
+```
+train_1_a_1.nii.gz     # Training set, patient 1, scan "a", reconstruction 1
+valid_53_a_1.nii.gz    # Validation set, patient 53, scan "a", reconstruction 1
+```
+
+### Labels CSV
+
+Multi-abnormality labels are provided as a CSV file with one row per volume. The `VolumeName` column matches the volume filename (without extension), and each of the 18 abnormality columns contains a binary value (0 or 1):
+
+```csv
+VolumeName,Medical material,Arterial wall calcification,Cardiomegaly,Pericardial effusion,Coronary artery wall calcification,Hiatal hernia,Lymphadenopathy,Emphysema,Atelectasis,Lung nodule,Lung opacity,Pulmonary fibrotic sequela,Pleural effusion,Mosaic attenuation pattern,Peribronchial thickening,Consolidation,Bronchiectasis,Interlobular septal thickening
+train_1_a_1,0,1,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0
+train_1_a_2,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0
+valid_53_a_1,1,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0
+```
+
+Separate CSV files are provided for the train and validation splits:
+- `train_labels.csv`
+- `valid_labels.csv`
+
+### Splits
+
+The official train/validation split is defined by the `split` prefix in each volume's filename — no separate splits JSON is required. The test set labels are withheld and evaluated via the [VLM3D Challenge](https://vlm3dchallenge.com/) leaderboard.
 
 ---
 
@@ -116,27 +173,70 @@ pip install -e .
 
 ## Preprocessing
 
-Raw NIfTI volumes are preprocessed with `preprocess.py` before training. The pipeline:
+Raw NIfTI volumes are preprocessed with `preprocess.py` (v4) before training. The pipeline applies the following operations in this exact order:
 
-1. Load raw `.nii.gz` and reorient to RAS+ canonical orientation
-2. Normalize intensities using **MONAI `ScaleIntensityRangePercentiles`**:
-   ```
-   lower=0, upper=99.5, b_min=0, b_max=1, clip=True, relative=False
-   ```
-3. Reshape to `(1, H, W, S)` channel-first for PyTorch
-4. Save as float32 `.npy`
+1. **Load** raw `.nii.gz` and reorient to RAS+ canonical orientation; read voxel spacing from the NIfTI header
+2. **Crop** to the bounding box of non-zero voxels with a configurable margin (default 4 voxels). Done before normalization so that foreground statistics are not corrupted by large zero-padded background regions.
+3. **Normalize** intensities — choice of:
+   - `zscore`: foreground-masked z-score via MONAI `NormalizeIntensity(nonzero=True)`. Mean/std are computed on non-zero voxels only; background remains 0. Recommended for structural MRI (T1, T2, FLAIR).
+   - `percentile`: `ScaleIntensityRangePercentiles(lower, upper, b_min=0, b_max=1, clip=True)`. Recommended for modalities where extreme intensities carry pathological signal (NM-MRI, PET).
 
-To run preprocessing on raw NIfTI files:
+   Done before resampling — resampling first would introduce interpolated values at the foreground/background boundary, corrupting the non-zero mask used by z-score.
+4. **Resample** to a target voxel spacing using `scipy.ndimage.zoom` (trilinear, `order=1`). Either:
+   - User-supplied via `--target_spacing H,W,S` (mm), or
+   - Auto-computed as the per-axis **median spacing** across the dataset (a Pass-1 header scan happens before any volume is processed).
+5. **Add channel dim** → `(1, H, W, S)` channel-first for PyTorch
+6. **(Optional) Resize** to `target_size³` via MONAI `Resize` (trilinear) if `--target_size` is set
+7. **Save** as float32 `.npy`
 
+A `preprocessing_manifest.json` is written to `--output_dir` recording every parameter used (target spacing, normalization mode, crop margin, per-file output shapes, errors), so the run is fully reproducible.
+
+### Usage examples
+
+**Z-score, auto median spacing, no resize** (typical for structural MRI):
 ```bash
 python preprocess.py \
-    --input_dir  /path/to/raw/nifti/folder \
-    --output_dir /path/to/output/folder \
+    --input_dir  /data/BMLMPS_FLAIR/imagesTr \
+    --output_dir /data/BMLMPS_FLAIR/preprocessed \
+    --norm       zscore \
     --workers    4 \
     --verify
 ```
 
-For PDCAD, no spatial resizing is applied — volumes preserve their original shape `(1, 300, 300, 70)`.
+**Percentile clip (0.5–99.5), fixed 1mm isotropic spacing, resize to 256³** (typical for PDCAD / NM-MRI):
+```bash
+python preprocess.py \
+    --input_dir      /data/PDCAD \
+    --output_dir     /data/PDCAD_preprocessed \
+    --norm           percentile \
+    --lower_pct      0.5 \
+    --upper_pct      99.5 \
+    --target_spacing 1.0,1.0,1.0 \
+    --target_size    256 \
+    --workers        4 \
+    --verify
+```
+
+### Key CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--input_dir` | *required* | Root folder of raw `.nii.gz` (searched recursively) |
+| `--output_dir` | *required* | Destination for `.npy` files and the manifest |
+| `--norm` | `zscore` | `zscore` or `percentile` |
+| `--lower_pct` / `--upper_pct` | `0.5` / `99.5` | Percentile bounds (only used when `--norm percentile`) |
+| `--target_spacing` | `None` (auto median) | Voxel spacing in mm as `H,W,S`, e.g. `1.0,1.0,1.0` |
+| `--crop_margin` | `4` | Voxels of margin around the nonzero bounding box |
+| `--target_size` | `None` | If set, resize to `target_size³` after resampling |
+| `--pattern` | `*.nii.gz` | Glob pattern for input files |
+| `--workers` | `4` | Parallel worker processes |
+| `--verify` | off | Print stats (shape, min/max/mean/std) for the first 3 outputs |
+
+### Notes per dataset
+
+- **PDCAD**: use `--norm percentile --lower_pct 0 --upper_pct 99.5`. Volumes preserve their original shape `(1, 300, 300, 70)` if you skip `--target_size` and use `--target_spacing` matching the source spacing.
+- **Meningioma T1c**: use `--norm zscore` for structural MRI; consider `--target_size 256` to resample variable FOVs to a consistent 256³ grid.
+- **CT-RATE**: not handled by this script directly — chest CT requires multi-window ([-1000, 1000], [-150, 250], [-1000, 400]) preprocessing rescaled to [0, 1] per channel (see Dataset section above).
 
 ---
 
@@ -149,9 +249,11 @@ The dataset loader expects a **flat** directory of preprocessed `.npy` volumes:
     ...
 ```
 
-Two JSON metadata files are also required:
+Two metadata files are also required:
 
-**`labels.json`** — maps each case ID to its binary label:
+**Labels** — either JSON or CSV is supported (auto-detected from the file extension of `labels_path`).
+
+*Option A — `labels.json`* (dict mapping case ID to its integer label):
 ```json
 {
     "case_001": 0,
@@ -160,7 +262,27 @@ Two JSON metadata files are also required:
 }
 ```
 
-**`splits.json`** — defines the train/val/test splits per fold:
+*Option B — `labels.csv`* (header row with an identifier column and a label column):
+```csv
+identifier,label
+case_001,0
+case_002,1
+case_003,0
+```
+
+The default column names are `identifier` and `label`. To use different column names, override them in the data config:
+```yaml
+module:
+  labels_path: /path/to/labels.csv
+  id_col:      case_id     # default: identifier
+  label_col:   class       # default: label
+```
+
+For multi-label datasets (e.g. CT-RATE's 18 abnormalities), set `task: multilabel` and `label_cols: [col1, col2, ...]` in the data config — the loader will then read multiple columns per row and return a float vector label per case.
+
+**`splits.json`** — defines the train/val/test splits per fold. Two layouts are supported:
+
+*Dict-of-folds* (PDCAD style):
 ```json
 {
     "0": {
@@ -170,6 +292,16 @@ Two JSON metadata files are also required:
     }
 }
 ```
+
+*List-of-folds* (BMLMPS / nnSSL style):
+```json
+[
+    {"train": [...], "val": [...]},
+    {"train": [...], "val": [...]}
+]
+```
+
+The `test` split is optional — if absent for a given fold, `trainer.test(...)` calls are skipped.
 
 ---
 
@@ -225,7 +357,95 @@ Training logs to [Weights & Biases](https://wandb.ai) under the project specifie
 
 ## Inference
 
-> ⚠️ `inference.py` is pending updates for the refactored codebase.
+Use `inference_nifti.py` to run inference on raw `.nii.gz` files. The script applies the **same preprocessing pipeline used at training time** (load → crop → normalize → resample → optional resize) directly inside the dataset, so volumes fed to the model match what the model saw during training — no need to pre-run `preprocess.py` first.
+
+### Parameter resolution
+
+Preprocessing parameters (normalization, target spacing, crop margin, etc.) are resolved with the following priority chain:
+
+1. **CLI flag** — explicit override (e.g. `--norm percentile`)
+2. **`preprocessing_manifest.json`** inside `--run_dir` — auto-copied there by `train.py` at the start of training
+3. **`cfg.data` fields** in the saved `config.yaml`
+4. **Safe defaults**
+
+For runs trained after the manifest was wired into `train.py`, you can leave every preprocessing flag off and the script will reproduce the training-time preprocessing exactly.
+
+### Running inference
+
+**Default (manifest read from `run_dir`, no extra flags):**
+```bash
+python inference_nifti.py \
+    --run_dir   checkpoints/anymc3d-pdcad-fold0 \
+    --nifti_dir /data/PDCAD/raw_nifti
+```
+
+**With ground-truth labels (computes metrics + plots):**
+```bash
+python inference_nifti.py \
+    --run_dir    checkpoints/vjepa21-vitb-pdcad-fold0 \
+    --nifti_dir  /data/PDCAD/raw_nifti \
+    --labels_csv /data/PDCAD/val_cases.csv \
+    --checkpoint "epoch=50-val_auroc=0.8808.ckpt"
+```
+
+**Manual override (legacy runs without a manifest):**
+```bash
+python inference_nifti.py \
+    --run_dir        checkpoints/anymc3d-pdcad-fold0 \
+    --nifti_dir      /data/PDCAD/raw_nifti \
+    --norm           percentile \
+    --lower_pct      0 --upper_pct 99.5 \
+    --target_spacing 1.0,1.0,1.0 \
+    --crop_margin    4
+```
+
+### Inputs
+
+- `--run_dir` — training run directory containing `config.yaml` and `*.ckpt`. The script auto-selects the checkpoint with the highest `val_auroc=...` in its filename, or you can pass `--checkpoint` to specify one explicitly.
+- `--nifti_dir` — directory of raw `.nii` / `.nii.gz` files. Both layouts are supported:
+  ```
+  flat:    nifti_dir/RJPD_000_0000.nii.gz
+  subdir:  nifti_dir/RJPD_000/RJPD_000_0000.nii.gz
+  ```
+- `--labels_csv` (optional) — CSV with columns `[case_id, label]`. When provided, the script computes AUROC, accuracy, balanced accuracy, F1, and per-class metrics, and writes confusion matrix + ROC plots.
+
+### Outputs
+
+All outputs are written **inside `--run_dir`**:
+
+| File | Description |
+|------|-------------|
+| `predictions_nifti.csv` | Per-case predictions, per-class probabilities, confidence. Always written. |
+| `summary_nifti.csv` | Overall + per-class metrics, plus the resolved preprocessing parameters used. Only when `--labels_csv` is provided. |
+| `confusion_matrix_thr0.5.png` | Confusion matrix at the default argmax threshold. Only with labels. |
+| `confusion_matrix_thrOpt.png` | Confusion matrix at the Youden's-J optimal threshold (binary only). |
+| `roc_curves_nifti.png` | Per-class ROC curves with optimal operating point marked (binary). |
+
+For binary classification, the script automatically computes the **Youden's J optimal threshold** (`max(TPR - FPR)`) and reports metrics under both the default 0.5 threshold and the optimal one, so you can see how much calibration shifts the operating point.
+
+### Batching behavior
+
+When `target_size` is set, all preprocessed volumes share a fixed shape and are batched at `--batch_size` (default 4). When `target_size` is **not** set, cropped/resampled shapes vary per case and the script automatically falls back to per-case inference (`batch_size=1`).
+
+### Inference CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--run_dir` | *required* | Training run directory (contains `config.yaml` + `*.ckpt`) |
+| `--nifti_dir` | *required* | Directory of raw NIfTI files |
+| `--labels_csv` | `None` | CSV with `[case_id, label]` for metric computation |
+| `--checkpoint` | best `val_auroc` | Specific `.ckpt` filename inside `run_dir` |
+| `--norm` | from manifest | Override: `zscore`, `percentile`, or `none` |
+| `--lower_pct` / `--upper_pct` | from manifest | Override percentile bounds |
+| `--target_spacing` | from manifest | Override target spacing as `H,W,S` mm |
+| `--crop_margin` | from manifest | Override crop margin in voxels |
+| `--target_size` | from manifest | Override final cube resize side length |
+| `--no_crop` | off | Disable nonzero-bbox cropping |
+| `--no_resample` | off | Disable resampling to target spacing |
+| `--class_names` | from `cfg.data` | Override display names for classes |
+| `--batch_size` | 4 | DataLoader batch size (used only when `target_size` is set) |
+| `--num_workers` | 4 | DataLoader workers |
+| `--device` | `cuda` | Inference device |
 
 ---
 
@@ -240,7 +460,7 @@ Training logs to [Weights & Biases](https://wandb.ai) under the project specifie
 | `slice_axis` | 3 | Axis to extract 2D slices along (axis 3 = 70 slices for PDCAD) |
 | `vision_blocks` | 0 | Number of learnable transformer blocks on top of backbone (0 = disabled) |
 | `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
-| `head_lr` | 5e-4 | Learning rate for classifier head |
+| `head_lr` | 1e-3 | Learning rate for classifier head |
 | `lr_scheduler` | `cosine` | LR schedule (`cosine` or `constant`) |
 | `focal_gamma` | 2.0 | Focal loss focusing parameter |
 | `focal_alpha` | 0.5 | Focal loss class balancing (0.5 for balanced datasets) |

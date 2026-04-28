@@ -1,0 +1,42 @@
+name:    CT-RATE
+dataset: ct-rate
+augment: true
+
+module:
+  _target_:    data_modules.cls_data_module.ClassificationDataModule
+  data_root:   /home/jma/Documents/projects/aaron/AnyMC3D/preprocessed_data/CT-RATE-2000
+  labels_path: /home/jma/Documents/projects/aaron/AnyMC3D/FLARE26_CT-RATE-2000/selected_72_hf.csv
+  splits_path: /home/jma/Documents/projects/aaron/AnyMC3D/FLARE26_CT-RATE-2000/splits.json
+  fold:        0
+  batch_size:  2
+  num_workers: 8
+  patch_size:  [336, 336, 96]
+  preprocess_strategy: percentile
+  file_suffix: ""
+
+  # ── Multi-label setup ─────────────────────────────────────
+  task:    multilabel
+  id_col:  VolumeName
+  label_cols:
+    - "Medical material"
+    - "Arterial wall calcification"
+    - "Cardiomegaly"
+    - "Pericardial effusion"
+    - "Coronary artery wall calcification"
+    - "Hiatal hernia"
+    - "Lymphadenopathy"
+    - "Emphysema"
+    - "Atelectasis"
+    - "Lung nodule"
+    - "Lung opacity"
+    - "Pulmonary fibrotic sequela"
+    - "Pleural effusion"
+    - "Mosaic attenuation pattern"
+    - "Peribronchial thickening"
+    - "Consolidation"
+    - "Bronchiectasis"
+    - "Interlobular septal thickening"
+
+  # class_names is replaced by label_cols for multilabel; you can drop it
+  # or repurpose it for display
+  class_names: null

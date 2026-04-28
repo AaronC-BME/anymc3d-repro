@@ -1,8 +1,9 @@
 # @package _global_
 model:
   _target_: model_arch.anymc3d.AnyMC3DLightningModule
+  task:          multiclass
   num_classes:   2
-  modalities:    [nm]
+  modalities:    [nm]  # only used for logging; actual modality-specific configs are in the DataModule
   backbone_name: dinov2_vitb14
   lora_rank:     8
   lora_alpha:    16
@@ -12,7 +13,7 @@ model:
   vision_blocks:       0
   mlp_ratio:           4.0
   block_dropout:       0.0
-  use_slice_attn_pool: True
+  use_slice_attn_pool: true
   use_patch_concat:    false
   use_25d:             false
   use_patch_attn_pool: false
@@ -22,23 +23,23 @@ model:
   lora_weight_decay:   1.0e-5
   vision_lr:           1.0e-4
   vision_weight_decay: 1.0e-5
-  head_lr:             5.0e-4
+  head_lr:             1.0e-3
   head_weight_decay:   1.0e-4
   warmup_epochs:       0
   lr_scheduler:        cosine
 
   # ── Loss ───────────────────────────────────────────────
   focal_gamma: 2.0
-  focal_alpha: 0.5
+  focal_alpha: 0.25
 
   # ── Training ───────────────────────────────────────────
   max_epochs: 150
   seed: 0
   precision: "16-mixed"
-  early_stopping_patience: 50
+  early_stopping_patience: 150
   save_top_k: 3
   log_every_n_steps: 10
 
   # ── WandB ───────────────────────────────────────────
   project: "pdcad-anymc3d"
-  run_name: anymc3d_attnPool_LoRALR_1e-4_Headlr_5e-4_vitb_pdcad_fold0
+  run_name: anymc3d_pdcad_attnPool_LoRALR_1e-4_Headlr_1e-3_vitb_PS_308_308_70_150ep

@@ -1,10 +1,10 @@
 """
-AnyMC3D-Compatible Preprocessing Pipeline (v4 — nnU-Net Style)
-===============================================================
-Adds nnU-Net-style resampling and foreground cropping on top of v3,
-plus a choice between z-score normalization and percentile clipping.
+AnyMC3D-Compatible Preprocessing Pipeline (v4)
+===============================================
+Adds resampling and foreground cropping on top of v3, plus a choice
+between z-score normalization and percentile clipping.
 
-Pipeline (applied in this order, matching nnU-Net exactly):
+Pipeline (applied in this order):
   1. Load raw .nii.gz + read voxel spacing from header
   2. Crop to nonzero bounding box (configurable margin)
   3. Normalize — one of:
@@ -15,22 +15,21 @@ Pipeline (applied in this order, matching nnU-Net exactly):
   6. (Optional) Resize to target_size³ via trilinear interpolation
   7. Save as float32 .npy
 
-Order rationale (from nnU-Net source):
+Order rationale:
   Crop before normalize: removes background padding so foreground stats
     (mean/std for z-score; percentiles for clipping) are not corrupted
     by large zero regions outside the body.
   Normalize before resample: the nonzero foreground mask must align
     perfectly with the image. Resampling first introduces interpolated
     non-zero values at the boundary, corrupting the mask and therefore
-    the normalization statistics. nnU-Net's comment: "normalization MUST
-    happen before resampling".
+    the normalization statistics. Normalization MUST happen before
+    resampling.
 
 Target spacing:
   If --target_spacing is given (e.g. "1.0,1.0,1.0"), that is used directly.
   Otherwise a two-pass approach is used:
     Pass 1 — scan all NIfTI headers to compute the per-axis median spacing
     Pass 2 — resample every volume to that median spacing
-  This matches nnU-Net's default resampling strategy.
 
 Usage examples:
   # Z-score, auto median spacing, no resize:
@@ -127,7 +126,6 @@ def crop_to_nonzero(data: np.ndarray, margin: int = 4) -> np.ndarray:
     Crop the volume to the bounding box of non-zero voxels, with an
     optional margin on all sides (clamped to image boundaries).
 
-    Matches nnU-Net's default foreground cropping behaviour.
     A margin of 4 voxels is recommended to protect thin structures at
     the edges of the foreground (e.g. substantia nigra, thin cortex).
 
@@ -155,8 +153,8 @@ def zscore_normalize(data: np.ndarray) -> np.ndarray:
     using MONAI NormalizeIntensity.
 
     nonzero=True computes mean/std on non-zero voxels only and sets
-    background back to 0 after normalizing — equivalent to the nnU-Net
-    MRI default foreground z-score.
+    background back to 0 after normalizing — equivalent to a foreground
+    z-score for MRI.
 
     Returns:
         normalized: float32 array, same shape as input.
@@ -227,7 +225,7 @@ def preprocess_volume(
     target_size: Optional[int],
 ) -> np.ndarray:
     """
-    Run the full nnU-Net-style preprocessing pipeline for one volume.
+    Run the full preprocessing pipeline for one volume.
 
     Returns:
         np.ndarray  shape (1, H, W, S) or (1, T, T, T),  float32
@@ -264,7 +262,7 @@ def preprocess_volume(
 def compute_median_spacing(nifti_files: List[Path]) -> Tuple[float, float, float]:
     """
     Scan NIfTI headers across the dataset and return the per-axis
-    median voxel spacing — the nnU-Net resampling target.
+    median voxel spacing — used as the resampling target.
     """
     spacings = []
     for p in tqdm(nifti_files, desc="Reading spacings"):
@@ -341,7 +339,7 @@ def run_preprocessing(
               f"{tgt_spacing[0]:.4f} × {tgt_spacing[1]:.4f} × {tgt_spacing[2]:.4f} mm")
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    print(f"\nAnyMC3D Preprocessing Pipeline v4 (nnU-Net Style)")
+    print(f"\nAnyMC3D Preprocessing Pipeline v4")
     print(f"==================================================")
     print(f"Input dir:       {input_dir}")
     print(f"Output dir:      {output_dir}")
@@ -407,7 +405,7 @@ def run_preprocessing(
 
     # ── Manifest ──────────────────────────────────────────────────────────────
     manifest = {
-        "pipeline_version": "v4_nnunet_style",
+        "pipeline_version": "v4",
         "input_dir":        str(input_dir),
         "output_dir":       str(output_dir),
         "target_spacing_mm": list(tgt_spacing),
@@ -445,7 +443,7 @@ def run_preprocessing(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="AnyMC3D nnU-Net-style preprocessing (resample → crop → normalize)",
+        description="AnyMC3D preprocessing (crop → normalize → resample)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -482,7 +480,7 @@ def parse_args():
         help=(
             "Target voxel spacing in mm, as 'H,W,S' e.g. '1.0,1.0,1.0'. "
             "If not set, the per-axis median spacing is computed from the "
-            "dataset (nnU-Net default)."
+            "dataset."
         )
     )
 
