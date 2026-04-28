@@ -322,8 +322,8 @@ export CUDA_VISIBLE_DEVICES=0
 # DINOv2 ViT-B/14 on PDCAD (recommended starting point)
 python train.py data=pdcad model=anymc3d_vitb
 
-# V-JEPA 2.1 ViT-B on PDCAD (TODO: not yet ready — refactor in progress)
-# python train.py data=pdcad model=vjepa21_vitb
+# V-JEPA 2.1 ViT-B on PDCAD 
+python train.py data=pdcad model=vjepa21_vitb
 
 # Background with logging
 nohup python train.py data=pdcad model=anymc3d_vitb > logs/anymc3d_vitb_pdcad.log 2>&1 &
