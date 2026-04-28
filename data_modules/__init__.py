@@ -1,12 +1,20 @@
 """
 Data modules for AnyMC3D.
 
-Each submodule pairs a raw Dataset (loading + resize only) with a
-DataModule that builds train/val/test DataLoaders. Augmentation lives
-in data_augmentation.py and is attached externally.
+A single generic dataset (ClassificationDataset) and matching DataModule
+cover PDCAD, BMLMPS, meningioma, and any future 3D volume classification
+dataset whose .npy files follow the ``{data_root}/{case_id}_0000.npy``
+convention. All dataset-specific behaviour is driven by the Hydra data
+config — no per-dataset Python subclass needed.
+
+Augmentation lives in data_augmentation.py and is attached externally
+via apply_augmentation(dm, ...).
 """
 
-from .pdcad_dataset import PDCADDataset, PDCADDataModule
+from .classification_dataset import (
+    ClassificationDataset,
+    ClassificationDataModule,
+)
 from .data_augmentation import (
     IMAGE_KEY,
     TransformedDataset,
@@ -16,8 +24,8 @@ from .data_augmentation import (
 )
 
 __all__ = [
-    "PDCADDataset",
-    "PDCADDataModule",
+    "ClassificationDataset",
+    "ClassificationDataModule",
     "IMAGE_KEY",
     "TransformedDataset",
     "apply_augmentation",
