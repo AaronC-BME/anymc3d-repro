@@ -247,6 +247,7 @@ class VJEPA2AnyMC3D(nn.Module):
         use_patch_attn_pool:   bool       = False,
         use_patch_concat:      bool       = False,
         use_25d:               bool       = False,
+        lora_target_modules:   list[str] = ["qkv", "proj"],
         
     ):
         super().__init__()
@@ -328,7 +329,7 @@ class VJEPA2AnyMC3D(nn.Module):
         lora_cfg = LoraConfig(
             r              = lora_rank,
             lora_alpha     = lora_alpha,
-            target_modules = ["qkv", "proj"],
+            target_modules = list(lora_target_modules),
             lora_dropout   = 0.0,
             bias           = "none",
         )
@@ -499,6 +500,7 @@ class VJEPA2LightningModule(L.LightningModule):
         use_patch_concat:      bool       = False,
         use_25d:               bool       = False,
         # ── Optimizer ─────────────────────────────────────────────────────────
+        lora_target_modules:   list[str] = ["qkv", "proj"],
         lora_lr:               float      = 1e-4,
         lora_weight_decay:     float      = 1e-5,
         head_lr:               float      = 1e-3,
@@ -515,6 +517,10 @@ class VJEPA2LightningModule(L.LightningModule):
         early_stopping_patience: int = 50,
         save_top_k:           int   = 3,
         log_every_n_steps:    int   = 10,
+        devices:              int = 1,
+        strategy:            str   = "auto",
+        num_nodes:           int   = 1,
+        sync_batchnorm:      bool  = False,
         #WandB logging
         project:              str   = "AnyMC3D",
         run_name:             str   = "VJEPA2_1_AnyMC3D_Run",
@@ -538,6 +544,7 @@ class VJEPA2LightningModule(L.LightningModule):
             use_patch_attn_pool   = use_patch_attn_pool,
             use_patch_concat      = use_patch_concat,
             use_25d               = use_25d,
+            lora_target_modules   = lora_target_modules,
         )
 
         self.num_classes = num_classes

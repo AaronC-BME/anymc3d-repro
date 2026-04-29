@@ -11,7 +11,7 @@ Augmentation lives in data_augmentation.py and is attached externally
 via apply_augmentation(dm, ...).
 """
 
-from .classification_dataset import (
+from .cls_data_module import (
     ClassificationDataset,
     ClassificationDataModule,
 )

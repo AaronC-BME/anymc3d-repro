@@ -646,6 +646,10 @@ class AnyMC3DLightningModule(L.LightningModule):
         early_stopping_patience: int = 50,
         save_top_k:           int   = 3,
         log_every_n_steps:    int   = 10,
+        devices:              int = 1,
+        strategy:            str   = "auto",
+        num_nodes:           int   = 1,
+        sync_batchnorm:      bool  = False,
         #WandB logging
         project:              str   = "AnyMC3D",
         run_name:             str   = "AnyMC3D_Run",
