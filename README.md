@@ -362,6 +362,50 @@ python train.py data=pdcad model=anymc3d_vitb model.lora_lr=2e-4
 
 Training logs to [Weights & Biases](https://wandb.ai) under the project specified in the model config (`pdcad-anymc3d` by default). Checkpoints are saved under `checkpoints/<run_name>/`.
 
+### Multi-GPU training (DDP)
+
+Distributed Data Parallel (DDP) is enabled by adjusting four parameters in the model config (e.g. `configs/model/anymc3d_vitb.yaml`):
+
+```yaml
+# ── Trainer / DDP settings ────────────────────────────────
+devices:        1            # int (count), -1 (all visible), or list e.g. [0, 1]
+strategy:       auto         # "auto" for single-GPU; "ddp" for multi-GPU
+num_nodes:      1            # >1 only for multi-machine training
+sync_batchnorm: false        # leave false unless you add BatchNorm layers
+```
+
+The defaults (`devices: 1`, `strategy: auto`) preserve single-GPU behavior — DDP only activates when you override them. These knobs live in the model config because run scaling tends to track the model: a smaller backbone may fit on one GPU, while a larger one needs two or more.
+
+**Common launch patterns** (all overridable from the CLI without editing the YAML):
+
+```bash
+# 2 GPUs on one machine via DDP
+python train.py data=pdcad model=anymc3d_vitb \
+    model.devices=2 model.strategy=ddp
+
+# All visible GPUs (use CUDA_VISIBLE_DEVICES to control which)
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py data=pdcad model=anymc3d_vitb \
+    model.devices=-1 model.strategy=ddp
+
+# Specific GPUs by index
+python train.py data=pdcad model=anymc3d_vitb \
+    'model.devices=[0,2]' model.strategy=ddp
+```
+
+> **Don't use** `python -m torch.distributed.launch` or `torchrun` — Lightning's DDP strategy spawns the worker processes itself when `devices > 1`.
+
+**Things to know before your first DDP run:**
+
+- **Per-GPU batch size scales with rank count.** `data.module.batch_size: 2` on 2 GPUs gives an effective batch of 4. If you want the same effective batch as a single-GPU run, halve the per-GPU batch; if you keep it the same, consider scaling `lora_lr` / `head_lr` proportionally (linear scaling rule).
+- **PEFT/LoRA + DDP can raise "parameter unused in forward" errors** because some adapter linears may not be visited every step. If you hit this, switch the strategy:
+  ```bash
+  python train.py ... model.strategy=ddp_find_unused_parameters_true
+  ```
+  There's a small perf cost but it always works.
+- **`num_workers` is per-rank.** `data.module.num_workers: 8` × 2 GPUs = 16 worker processes. Make sure your machine has the CPU and RAM headroom; otherwise lower it.
+- **WandB logs from rank 0 only** — Lightning handles this automatically. Checkpoints, metrics, and console output are also rank-0 only. You'll see one progress bar, not N.
+- **Validate on single-GPU first** after any pipeline change before going multi-GPU. Most DDP issues show up as "training works on 1 GPU but breaks on 2".
+
 ---
 
 ## Inference
@@ -471,7 +515,7 @@ When `target_size` is set, all preprocessed volumes share a fixed shape and are 
 | `slice_axis` | 3 | Axis to extract 2D slices along (axis 3 = 70 slices for PDCAD) |
 | `vision_blocks` | 0 | Number of learnable transformer blocks on top of backbone (0 = disabled) |
 | `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
-| `head_lr` | 5e-4 | Learning rate for classifier head |
+| `head_lr` | 1e-3 | Learning rate for classifier head |
 | `lr_scheduler` | `cosine` | LR schedule (`cosine` or `constant`) |
 | `focal_gamma` | 2.0 | Focal loss focusing parameter |
 | `focal_alpha` | 0.5 | Focal loss class balancing (0.5 for balanced datasets) |

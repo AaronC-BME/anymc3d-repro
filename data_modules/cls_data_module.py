@@ -63,6 +63,7 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
+import lightning as L
 from torch.utils.data import DataLoader, Dataset
 
 from .data_augmentation import TransformedDataset
@@ -410,7 +411,7 @@ class ClassificationDataset(Dataset):
 # Generic data module
 # ---------------------------------------------------------------
 
-class ClassificationDataModule:
+class ClassificationDataModule(L.LightningDataModule):
     """
     Generic data module covering any dataset that fits the
     ``ClassificationDataset`` contract.  Selected in Hydra with e.g.:
@@ -458,6 +459,7 @@ class ClassificationDataModule:
         task:                str             = "multiclass",
         label_cols:          Optional[list]  = None,
     ):
+        super().__init__()
         self.data_root           = data_root
         self.labels_path         = labels_path
         self.splits_path         = splits_path

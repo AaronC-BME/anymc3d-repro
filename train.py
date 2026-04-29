@@ -11,14 +11,12 @@ Layout:
     model/anymc3d.py                    — AnyMC3DLightningModule
 
 Usage:
-    export CUDA_VISIBLE_DEVICES=2
+    export CUDA_VISIBLE_DEVICES=3
     python train.py                                  # defaults (data=pdcad, model=anymc3d)
     python train.py data=pdcad model=anymc3d         # explicit
     python train.py data=meningioma_t1c              # swap data
     python train.py data.module.batch_size=4         # override a module kwarg
     python train.py 'data.module.fold=[0,1,2]'       # multi-fold
-
-    nohup python train.py > logs/run.log 2>&1 &
 """
 
 import hydra
@@ -54,7 +52,6 @@ def attach_augmentation(dm, cfg):
     """
     from data_modules.data_augmentation import apply_augmentation
     apply_augmentation(dm, augment_train=cfg.data.augment)
-    # meningioma datasets still handle augmentation internally for now.
     return dm
 
 
@@ -114,7 +111,10 @@ def train_one_fold(cfg, fold: int, multi_fold: bool = False):
     trainer = L.Trainer(
         max_epochs        = cfg.model.max_epochs,
         accelerator       = "gpu",
-        devices           = 1,
+        devices           = cfg.model.devices,
+        strategy          = cfg.model.strategy,
+        num_nodes         = cfg.model.num_nodes,
+        sync_batchnorm    = cfg.model.sync_batchnorm,
         precision         = cfg.model.precision,
         logger            = wandb_logger,
         callbacks         = [checkpoint_cb, early_stop_cb, lr_monitor],
@@ -123,10 +123,13 @@ def train_one_fold(cfg, fold: int, multi_fold: bool = False):
     )
 
     print(f"Starting training — fold {fold}...")
-    trainer.fit(model, dm.train_dataloader(), dm.val_dataloader())
+    trainer.fit(model, datamodule=dm)
 
     print(f"\nRunning test set evaluation — fold {fold}...")
-    trainer.test(model, dm.test_dataloader(), ckpt_path="best")
+    if "test" in dm._available_splits:
+        trainer.test(model, datamodule=dm, ckpt_path="best")
+    else:
+        print(f"No test split — skipping test evaluation for fold {fold}.")
 
     wandb.finish()
     print(f"\nFold {fold} complete. Outputs: {ckpt_dir}")
@@ -137,6 +140,24 @@ def main(cfg: DictConfig) -> None:
 
     torch.set_float32_matmul_precision('medium')
     L.seed_everything(cfg.model.seed)
+
+    # ── Sanity check: model task and data task must agree ─────────────────
+    model_task = cfg.model.get('task', 'multiclass')
+    data_task  = cfg.data.module.get('task', 'multiclass')
+    if model_task != data_task:
+        raise ValueError(
+            f"Task mismatch: model.task={model_task!r} but "
+            f"data.module.task={data_task!r}. They must agree."
+        )
+
+    # Also: for multilabel, num_classes must equal len(label_cols)
+    if model_task == 'multilabel':
+        n_labels = len(cfg.data.module.get('label_cols') or [])
+        if cfg.model.num_classes != n_labels:
+            raise ValueError(
+                f"Multilabel: model.num_classes={cfg.model.num_classes} "
+                f"but data has {n_labels} label_cols. They must match."
+            )
 
     print("\n" + "=" * 60)
     print(f"Training: {cfg.model.run_name}")

@@ -40,6 +40,12 @@ model:
   save_top_k: 3
   log_every_n_steps: 10
 
+  # ── New: multi-GPU / DDP ──────────────────────────────────
+  devices:        1            # int (count), -1 (all), or list e.g. [0,1]
+  strategy:       auto         # "auto" for single-GPU; "ddp" for multi-GPU
+  num_nodes:      1            # >1 only for multi-machine training
+  sync_batchnorm: false        # leave false unless you add BN layers
+
   # ── WandB ───────────────────────────────────────────
   project: "pdcad-anymc3d"
   run_name: anymc3d_pdcad_attnPool_LoRALR_1e-4_Headlr_1e-3_vitb_PS_308_308_70_150ep
