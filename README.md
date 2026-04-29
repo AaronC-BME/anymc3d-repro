@@ -34,7 +34,7 @@ AnyMC3D wraps a frozen 2D / video foundation model with lightweight LoRA adapter
 ```
 AnyMC3D/
 ├── train.py                        # Hydra-driven training script
-├── inference_online.py             # Inference + metrics + plots (TODO: update for refactor)
+├── inference_online.py             # Legacy inference (use inference_nifti.py instead)
 ├── inference_nifti.py              # Inference on raw NIfTI (full preprocessing + metrics + plots)
 ├── balanced_accuracy.py            # Custom balanced accuracy metric
 ├── preprocess.py                   # Preprocessing pipeline (crop → normalize → resample)
@@ -89,9 +89,24 @@ CT-RATE is a publicly available chest CT dataset from Istanbul Medipol Universit
 
 Access requires agreeing to the dataset terms (academic/research use only). After approval, volumes and metadata can be downloaded directly from the Hugging Face repository.
 
+A **72-volume subset** for quick setup and testing is available on Google Drive. It contains raw `.nii.gz` volumes (at least 3 per class), labels CSVs, and a splits file (54 train / 18 val) — no preprocessing required before running `preprocess.py`.
+
+> 📁 **[Download CT-RATE subset (Google Drive)](https://drive.google.com/drive/folders/1cx9GDRR-0nj-55OBZgFLQ6ToE8EVr8K8)**
+
 **Task:** 18-class multi-label binary classification (one binary label per abnormality per volume). The 18 abnormalities are:
 
 > Medical material, arterial wall calcification, cardiomegaly, pericardial effusion, coronary artery wall calcification, hiatal hernia, lymphadenopathy, emphysema, atelectasis, lung nodule, lung opacity, pulmonary fibrotic sequela, pleural effusion, mosaic attenuation pattern, peribronchial thickening, consolidation, bronchiectasis, interlobular septal thickening
+
+**Dataset statistics:**
+
+| Split | Patients | Volumes |
+|-------|----------|---------|
+| Train | 20,000 | 45,149 |
+| Val | 1,304 | 2,000 |
+| Test | — | 3,039 |
+| **Total** | **21,304** | **50,188** |
+
+**Preprocessing:** CT window `[-1000, 400]` (lung window) rescaled to `[0, 1]`, then resized to `476 × 476 × 240`. Three CT windows (all-tissue, soft-tissue, lung: `[-1000, 1000]`, `[-150, 250]`, `[-1000, 400]`) are used as three input channels, following the A.S.L. multi-window scheme described in the paper.
 
 ---
 
@@ -191,14 +206,14 @@ A `preprocessing_manifest.json` is written to `--output_dir` recording every par
 **Z-score, auto median spacing, no resize** (typical for structural MRI):
 ```bash
 python preprocess.py \
-    --input_dir  /path/to/raw/folder \
-    --output_dir /path/to/preprocessed/folder \
+    --input_dir  /data/BMLMPS_FLAIR/imagesTr \
+    --output_dir /data/BMLMPS_FLAIR/preprocessed \
     --norm       zscore \
     --workers    4 \
     --verify
 ```
 
-**Percentile clip (0.5–99.5), fixed 1mm isotropic spacing, resize to 256³** :
+**Percentile clip (0.5–99.5), fixed 1mm isotropic spacing, resize to 256³** (typical for PDCAD / NM-MRI):
 ```bash
 python preprocess.py \
     --input_dir      /data/PDCAD \
@@ -287,7 +302,7 @@ For multi-label datasets (e.g. CT-RATE's 18 abnormalities), set `task: multilabe
 }
 ```
 
-*List-of-folds* :
+*List-of-folds* (BMLMPS / nnSSL style):
 ```json
 [
     {"train": [...], "val": [...]},
@@ -322,7 +337,7 @@ export CUDA_VISIBLE_DEVICES=0
 # DINOv2 ViT-B/14 on PDCAD (recommended starting point)
 python train.py data=pdcad model=anymc3d_vitb
 
-# V-JEPA 2.1 ViT-B on PDCAD 
+# V-JEPA 2.1 ViT-B on PDCAD
 python train.py data=pdcad model=vjepa21_vitb
 
 # Background with logging
@@ -445,6 +460,8 @@ When `target_size` is set, all preprocessed volumes share a fixed shape and are 
 
 ## Key hyperparameters
 
+### DINOv2 backbone (`anymc3d_vitb`)
+
 | Parameter | Default (PDCAD ViT-B) | Description |
 |-----------|----------------------|-------------|
 | `backbone_name` | `dinov2_vitb14` | DINOv2 variant (`vits14`, `vitb14`, `vitl14`) |
@@ -463,6 +480,62 @@ When `target_size` is set, all preprocessed volumes share a fixed shape and are 
 | `batch_size` | 2 | Training batch size (set in data config) |
 | `patch_size` | `[300, 300, 70]` | Input volume dimensions (set in data config) |
 
+### V-JEPA 2.1 backbone (`vjepa21_vitb`)
+
+The V-JEPA 2.1 backbone is loaded via `torch.hub` from the official Meta repo (`facebookresearch/vjepa2`). Both V-JEPA 2 and V-JEPA 2.1 entry points are supported; the `hub_name` parameter selects the variant.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `hub_name` | `vjepa2_1_vit_base_384` | torch.hub entry point. See variants below. |
+| `vjepa_checkpoint_path` | `null` | Path to pretrained `.pt` weights. Pass at training start; leave `null` for inference (Lightning restores from `.ckpt`). |
+| `lora_rank` | 8 | LoRA rank — applied to `qkv` and `proj` linear layers |
+| `lora_alpha` | 16 | LoRA scaling |
+| `num_frames` | 32 | Number of slices uniformly sampled along `slice_axis`. **Must be even** (tubelet size = 2). |
+| `slice_axis` | 3 | Axis to sample frames along (1=H, 2=W, 3=S — use 3 for PDCAD) |
+| `dropout` | 0.1 | Dropout before the classifier head |
+| `lora_lr` | 1e-4 | Learning rate for LoRA parameters |
+| `head_lr` | 1e-3 | Learning rate for classifier head and pooling modules |
+| `focal_gamma` | 2.0 | Focal loss focusing parameter |
+| `focal_alpha` | 0.25 | Focal loss class balancing |
+| `warmup_epochs` | 10 | Linear warmup epochs before cosine annealing |
+| `max_epochs` | 150 | Maximum training epochs |
+| `task` | `multiclass` | `multiclass` (softmax + CE) or `multilabel` (sigmoid + BCE) |
+
+**Available `hub_name` variants:**
+
+| Variant | Embed dim | Crop size |
+|---------|-----------|-----------|
+| `vjepa2_vit_large` | 1024 | 256 |
+| `vjepa2_vit_huge` | 1280 | 256 |
+| `vjepa2_vit_giant` | 1408 | 256 |
+| `vjepa2_vit_giant_384` | 1408 | 384 |
+| `vjepa2_1_vit_base_384` *(default)* | 768 | 384 |
+| `vjepa2_1_vit_large_384` | 1024 | 384 |
+| `vjepa2_1_vit_giant_384` | 1408 | 384 |
+| `vjepa2_1_vit_gigantic_384` | 1536 | 384 |
+
+`crop_size` is determined by `hub_name` automatically — slices are resized to match before being fed to the encoder. Patch size (16) and tubelet size (2) are constant across all V-JEPA 2 / 2.1 variants.
+
+**Token count formula:**
+```
+N_tokens = (num_frames / tubelet_size) × (crop_size / patch_size)²
+         = T'                          × H'·W'
+```
+where `T'` is the number of time-tubes (each spans 2 consecutive sampled slices) and `H'·W'` is the spatial grid per tube.
+
+**AnyMC3D-parity flags.** V-JEPA has no CLS token, so pooling has slightly different semantics than the DINOv2 version. All flags default to `False`, giving a flat mean-pool over all tokens — matching the original V-JEPA paper recipe. Toggle them on to mirror DINOv2's `[CLS ; mean(patches)]` aggregation:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `use_25d` | `False` | If `True`, each sampled slice becomes `[s-1, s, s+1]` stacked as 3 channels (neighbours from original slice space, with boundary padding). If `False`, single slice replicated to 3 channels. |
+| `use_patch_attn_pool` | `False` | If `True`, AttentionPool over the `H'·W'` spatial tokens per time-tube. If `False`, mean-pool over the spatial grid. |
+| `use_patch_concat` | `False` | If `True`, per-time-tube feature = `[attn_pool(spatial) ; mean(spatial)]` → 2D. The V-JEPA analogue of DINOv2's `[CLS ; mean(patches)]`. Implies an internal AttentionPool. |
+| `use_slice_attn_pool` | `False` | If `True`, AttentionPool over `T'` time-tubes → volume embedding. If `False`, mean over time-tubes. |
+
+**Checkpoint loading.** `vjepa_checkpoint_path` controls whether pretrained base weights are loaded during `__init__`:
+- **Training**: pass the explicit path to the `.pt` file (e.g. `vjepa_2_1_checkpoint/vjepa2_1_vitb_dist_vitG_384.pt`)
+- **Inference**: pass `null` (the default) — Lightning's `load_from_checkpoint` restores the full model state from the `.ckpt`, so loading base weights here would be redundant and may fail on machines without the original `.pt` file
+
 ---
 
 ## Citation
@@ -473,5 +546,12 @@ When `target_size` is set, all preprocessed volumes share a fixed shape and are 
   author  = {Liu et al.},
   journal = {arXiv:2512.12887},
   year    = {2025}
+}
+
+@article{hamamci2024generalist,
+  title   = {Generalist Foundation Models from a Multimodal Dataset for 3D Computed Tomography},
+  author  = {Hamamci et al.},
+  journal = {arXiv:2403.17834},
+  year    = {2024}
 }
 ```
