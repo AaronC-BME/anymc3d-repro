@@ -138,7 +138,37 @@ Separate CSV files are provided for the train and validation splits:
 
 ### Splits
 
-The official train/validation split is defined by the `split` prefix in each volume's filename — no separate splits JSON is required. The test set labels are withheld and evaluated via the [VLM3D Challenge](https://vlm3dchallenge.com/) leaderboard.
+**`splits.json`** — defines the train/val/test splits per fold. Two layouts are supported:
+
+*Dict-of-folds* (PDCAD / CT-RATE style):
+```json
+{
+    "0": {
+        "train": [
+            "CT-RATE_train_8661_a_1",
+            "CT-RATE_train_665_a_1",
+            "CT-RATE_train_15479_a_1",
+            "..."
+        ],
+        "val": [
+            "CT-RATE_train_101_a_1",
+            "CT-RATE_train_2275_a_1",
+            "CT-RATE_train_6369_a_1",
+            "..."
+        ]
+    }
+}
+```
+
+Case IDs must match the `.npy` filenames in `data_root` (without the `_0000.npy` suffix). The `test` split is optional — if absent for a given fold, `trainer.test(...)` calls are skipped.
+
+*List-of-folds* :
+```json
+[
+    {"train": [...], "val": [...]},
+    {"train": [...], "val": [...]}
+]
+```
 
 ---
 
